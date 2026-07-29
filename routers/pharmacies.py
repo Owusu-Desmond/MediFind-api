@@ -1,9 +1,8 @@
 import os
-import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
-import models, schemas, deps, auth
+import models, schemas, deps, auth, storage
 import math
 
 router = APIRouter(
@@ -11,7 +10,61 @@ router = APIRouter(
     tags=["Pharmacies"],
 )
 
-UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "certificates")
+@router.get("/signed-url")
+async def get_signed_url(
+    object_path: str,
+    current_user: models.User = Depends(deps.get_current_active_user),
+):
+    """
+    Generate a short-lived Supabase Storage signed URL for a private file.
+    object_path should be the path inside the bucket, e.g. "certificates/abc123_file.pdf"
+    The signed URL is valid for 1 hour (3600 seconds).
+    """
+    import httpx, os
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
+    supabase_bucket = os.getenv("SUPABASE_BUCKET", "certificates")
+
+    if not supabase_url or not supabase_key:
+        raise HTTPException(status_code=500, detail="Supabase credentials not configured")
+
+    sign_url = f"{supabase_url}/storage/v1/object/sign/{supabase_bucket}/{object_path}"
+    headers = {
+        "Authorization": f"Bearer {supabase_key}",
+        "apikey": supabase_key,
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        res = await client.post(sign_url, headers=headers, json={"expiresIn": 3600})
+
+    if res.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Supabase signed URL error (HTTP {res.status_code}): {res.text}",
+        )
+
+    data = res.json()
+    signed_path = data.get("signedURL") or data.get("signedUrl") or ""
+    if not signed_path:
+        raise HTTPException(status_code=502, detail=f"Unexpected Supabase response: {data}")
+
+    # Form full URL based on how Supabase returned signed_path
+    if signed_path.startswith("http://") or signed_path.startswith("https://"):
+        full_url = signed_path
+    elif signed_path.startswith("/storage/v1"):
+        full_url = f"{supabase_url}{signed_path}"
+    else:
+        if not signed_path.startswith("/"):
+            signed_path = "/" + signed_path
+        full_url = f"{supabase_url}/storage/v1{signed_path}"
+
+    print(f"[Supabase] Generated signed URL: {full_url}")
+    return {"signed_url": full_url, "expires_in": 3600}
+
 
 @router.post("/upload-certificate")
 async def upload_certificate(
@@ -23,16 +76,18 @@ async def upload_certificate(
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Allowed: PDF, PNG, JPG, JPEG")
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-
     contents = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(contents)
+    try:
+        file_url = await storage.upload_file_to_supabase(
+            file_bytes=contents,
+            filename=file.filename,
+            content_type=file.content_type or "application/octet-stream",
+            folder="certificates"
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
-    relative_url = f"/uploads/certificates/{unique_filename}"
-    return {"url": relative_url, "filename": file.filename}
+    return {"url": file_url, "filename": file.filename}
 
 @router.post("/", response_model=schemas.PharmacyResponse)
 def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db), current_user: models.User = Depends(deps.get_current_active_user)):

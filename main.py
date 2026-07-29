@@ -3,8 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import auth, users, pharmacies, medicines, reservations, payments
 
-# Create the database tables
-Base.metadata.create_all(bind=engine)
+# Create the database tables (wrapped so a transient DB error at startup doesn't crash the process)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"[startup] WARNING: could not run create_all — {e}")
 
 app = FastAPI(
     title="MediFind API",
@@ -13,12 +16,17 @@ app = FastAPI(
 )
 
 # CORS configuration
+# NOTE: "*" (wildcard) CANNOT be used together with allow_credentials=True.
+# Browsers reject responses that combine credentials mode with a wildcard origin.
+# All allowed origins must be listed explicitly.
 origins = [
     "http://localhost",
-    "http://localhost:3000",
+    "http://localhost:3000",   # Next.js admin dashboard
+    "http://localhost:3001",   # Next.js pharmacy portal (if on 3001)
     "http://localhost:8080",
     "http://localhost:8081",
-    "*" # For mobile apps testing
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
 ]
 
 app.add_middleware(
