@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas, deps, auth
@@ -8,6 +10,29 @@ router = APIRouter(
     prefix="/api/pharmacies",
     tags=["Pharmacies"],
 )
+
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "certificates")
+
+@router.post("/upload-certificate")
+async def upload_certificate(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Allowed: PDF, PNG, JPG, JPEG")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+    contents = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    relative_url = f"/uploads/certificates/{unique_filename}"
+    return {"url": relative_url, "filename": file.filename}
 
 @router.post("/", response_model=schemas.PharmacyResponse)
 def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db), current_user: models.User = Depends(deps.get_current_active_user)):

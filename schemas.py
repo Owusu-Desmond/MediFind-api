@@ -40,6 +40,7 @@ class PharmacyBase(BaseModel):
     opening_hours: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
+    certificate_url: Optional[str] = None
 
 class PharmacyCreate(PharmacyBase):
     pass

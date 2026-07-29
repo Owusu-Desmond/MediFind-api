@@ -29,6 +29,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import os
+from fastapi.staticfiles import StaticFiles
+
+# Create upload directory and mount static files
+os.makedirs("uploads/certificates", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # Include routers
 app.include_router(auth.router)
 app.include_router(users.router)

@@ -64,6 +64,7 @@ class Pharmacy(Base):
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
     verified = Column(Boolean, default=False)
+    certificate_url = Column(String, nullable=True)
 
     # Relationships
     staff = relationship("PharmacyStaff", back_populates="pharmacy")
