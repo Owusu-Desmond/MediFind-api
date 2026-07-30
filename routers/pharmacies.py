@@ -159,3 +159,43 @@ def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(
     db.commit()
     db.refresh(pharmacy)
     return pharmacy
+
+@router.put("/{pharmacy_id}", response_model=schemas.PharmacyResponse)
+def update_pharmacy(
+    pharmacy_id: int,
+    pharmacy_data: schemas.PharmacyUpdate,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    update_dict = pharmacy_data.model_dump(exclude_unset=True)
+    for key, value in update_dict.items():
+        if key == "status" and value:
+            try:
+                pharmacy.status = models.PharmacyStatus(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid status '{value}'")
+        else:
+            setattr(pharmacy, key, value)
+
+    db.commit()
+    db.refresh(pharmacy)
+    return pharmacy
+
+@router.delete("/{pharmacy_id}")
+def delete_pharmacy(
+    pharmacy_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    db.delete(pharmacy)
+    db.commit()
+    return {"message": "Pharmacy deleted successfully"}
+

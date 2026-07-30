@@ -45,6 +45,21 @@ class PharmacyBase(BaseModel):
 class PharmacyCreate(PharmacyBase):
     pass
 
+class PharmacyUpdate(BaseModel):
+    name: Optional[str] = None
+    location: Optional[str] = None
+    license_number: Optional[str] = None
+    pharmacist_name: Optional[str] = None
+    pharmacist_id: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    delivery_offered: Optional[bool] = None
+    opening_hours: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    certificate_url: Optional[str] = None
+    status: Optional[str] = None
+
 class PharmacyResponse(PharmacyBase):
     id: int
     status: str
