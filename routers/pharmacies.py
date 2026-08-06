@@ -195,6 +195,11 @@ def delete_pharmacy(
     if not pharmacy:
         raise HTTPException(status_code=404, detail="Pharmacy not found")
 
+    # Clean up related child entities to prevent foreign key violations
+    db.query(models.PharmacyStaff).filter(models.PharmacyStaff.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+    db.query(models.Inventory).filter(models.Inventory.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+    db.query(models.Reservation).filter(models.Reservation.pharmacy_id == pharmacy_id).delete(synchronize_session=False)
+
     db.delete(pharmacy)
     db.commit()
     return {"message": "Pharmacy deleted successfully"}

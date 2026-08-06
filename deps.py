@@ -15,19 +15,24 @@ def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Session 
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    secret_key = auth.SECRET_KEY or "medifind321qwerty"
     try:
-        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        payload = jwt.decode(token, secret_key, algorithms=[auth.ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
+            print("[Auth] JWT validation failed: missing 'sub' in token payload")
             raise credentials_exception
         token_data = schemas.TokenData(email=email, role=payload.get("role"))
-    except JWTError:
+    except JWTError as e:
+        print(f"[Auth] JWT decode failed: {e}")
         raise credentials_exception
     
     user = db.query(models.User).filter(models.User.email == token_data.email).first()
     if user is None:
+        print(f"[Auth] User with email '{token_data.email}' not found in database")
         raise credentials_exception
     if user.status != models.UserStatus.Active:
+        print(f"[Auth] User '{user.email}' status is '{user.status}' (not Active)")
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
 

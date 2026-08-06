@@ -67,9 +67,9 @@ class Pharmacy(Base):
     certificate_url = Column(String, nullable=True)
 
     # Relationships
-    staff = relationship("PharmacyStaff", back_populates="pharmacy")
-    inventory = relationship("Inventory", back_populates="pharmacy")
-    reservations = relationship("Reservation", back_populates="pharmacy")
+    staff = relationship("PharmacyStaff", back_populates="pharmacy", cascade="all, delete-orphan")
+    inventory = relationship("Inventory", back_populates="pharmacy", cascade="all, delete-orphan")
+    reservations = relationship("Reservation", back_populates="pharmacy", cascade="all, delete-orphan")
 
 class PharmacyStaff(Base):
     __tablename__ = "pharmacy_staff"
