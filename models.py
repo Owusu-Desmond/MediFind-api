@@ -40,6 +40,7 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.Patient, nullable=False)
     phone = Column(String, nullable=True)
     location = Column(String, nullable=True)
+    age = Column(Integer, nullable=True)
     status = Column(Enum(UserStatus), default=UserStatus.Active)
     date_created = Column(DateTime(timezone=True), server_default=func.now())
 

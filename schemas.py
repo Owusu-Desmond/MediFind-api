@@ -7,9 +7,20 @@ class UserBase(BaseModel):
     name: str
     phone: Optional[str] = None
     location: Optional[str] = None
+    age: Optional[int] = None
 
 class UserCreate(UserBase):
     password: str
+    role: Optional[str] = "Patient"
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    age: Optional[int] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
 
 class UserResponse(UserBase):
     id: int

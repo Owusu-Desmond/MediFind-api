@@ -6,11 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import auth, users, pharmacies, medicines, reservations, payments
 
-# Create the database tables (wrapped so a transient DB error at startup doesn't crash the process)
+from sqlalchemy import text
+
+# Create database tables and ensure newly added columns exist on existing databases
 try:
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;"))
 except Exception as e:
-    print(f"[startup] WARNING: could not run create_all — {e}")
+    print(f"[startup] WARNING: could not run create_all or schema migration — {e}")
 
 app = FastAPI(
     title="MediFind API",
