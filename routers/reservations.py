@@ -68,22 +68,38 @@ def update_status(res_id: int, status: str, db: Session = Depends(deps.get_db), 
     if not res:
         raise HTTPException(status_code=404, detail="Reservation not found")
         
-    try:
-        new_status = models.ReservationStatus(status)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid status")
+    status_map = {
+        "Pending": models.ReservationStatus.Pending_Pharmacy_Review,
+        "Confirmed": models.ReservationStatus.Approved,
+        "Picked Up": models.ReservationStatus.Collected,
+        "Completed": models.ReservationStatus.Collected,
+        "Cancelled": models.ReservationStatus.Cancelled,
+    }
+    
+    if status in status_map:
+        new_status = status_map[status]
+    else:
+        try:
+            new_status = models.ReservationStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid status")
         
-    # If approving, we might want to decrement stock
+    # If approving, decrement stock
     if new_status == models.ReservationStatus.Approved and res.status != models.ReservationStatus.Approved:
         for item in res.items:
             inv = db.query(models.Inventory).filter(models.Inventory.medicine_id == item.medicine_id, models.Inventory.pharmacy_id == res.pharmacy_id).first()
             if inv:
                 inv.stock_quantity = max(0, inv.stock_quantity - item.quantity)
+                if inv.stock_quantity <= 0:
+                    inv.status = "Out of Stock"
+                elif inv.stock_quantity <= 20:
+                    inv.status = "Low Stock"
                 
     res.status = new_status
     db.commit()
     db.refresh(res)
     return res
+
 
 @router.patch("/{res_id}/fulfillment", response_model=schemas.ReservationResponse)
 def update_fulfillment_payment(res_id: int, method: str, payment_pref: str, address: str = None, db: Session = Depends(deps.get_db), current_user: models.User = Depends(deps.get_current_active_user)):

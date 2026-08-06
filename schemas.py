@@ -117,6 +117,29 @@ class InventoryResponse(InventoryBase):
     class Config:
         from_attributes = True
 
+class InventoryMedicineCreate(BaseModel):
+    name: str
+    dosage: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    manufacturer: Optional[str] = None
+    batch_number: Optional[str] = None
+    stock_quantity: int = 0
+    price: float = 0.0
+    expiry_date: Optional[str] = None
+
+class InventoryMedicineUpdate(BaseModel):
+    name: Optional[str] = None
+    dosage: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    manufacturer: Optional[str] = None
+    batch_number: Optional[str] = None
+    stock_quantity: Optional[int] = None
+    price: Optional[float] = None
+    expiry_date: Optional[str] = None
+
+
 class ReservationItemBase(BaseModel):
     medicine_id: int
     quantity: int

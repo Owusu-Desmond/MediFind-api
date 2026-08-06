@@ -204,3 +204,175 @@ def delete_pharmacy(
     db.commit()
     return {"message": "Pharmacy deleted successfully"}
 
+
+@router.get("/my-pharmacy", response_model=schemas.PharmacyResponse)
+def get_my_pharmacy(
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    # 1. Check PharmacyStaff relation
+    staff = db.query(models.PharmacyStaff).filter(models.PharmacyStaff.user_id == current_user.id).first()
+    if staff:
+        pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == staff.pharmacy_id).first()
+        if pharmacy:
+            return pharmacy
+
+    # 2. Check pharmacy by user email
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.email == current_user.email).first()
+    if pharmacy:
+        return pharmacy
+
+    # 3. Fallback: get first available pharmacy or create a default demo pharmacy
+    pharmacy = db.query(models.Pharmacy).first()
+    if pharmacy:
+        return pharmacy
+
+    default_pharmacy = models.Pharmacy(
+        name="Ghana National Pharmacy (Accra Central)",
+        location="Ring Road Central, Accra",
+        license_number="PHA-GH-2026-8830",
+        pharmacist_name=current_user.name,
+        email=current_user.email,
+        phone=current_user.phone or "+233 30 223 4455",
+        status=models.PharmacyStatus.Approved,
+        delivery_offered=True,
+        opening_hours="08:00 AM - 10:00 PM"
+    )
+    db.add(default_pharmacy)
+    db.commit()
+    db.refresh(default_pharmacy)
+
+    staff_link = models.PharmacyStaff(user_id=current_user.id, pharmacy_id=default_pharmacy.id)
+    db.add(staff_link)
+    db.commit()
+
+    return default_pharmacy
+
+
+@router.get("/{pharmacy_id}/inventory", response_model=List[schemas.InventoryResponse])
+def get_pharmacy_inventory(
+    pharmacy_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    return db.query(models.Inventory).filter(models.Inventory.pharmacy_id == pharmacy_id).all()
+
+
+@router.post("/{pharmacy_id}/inventory", response_model=schemas.InventoryResponse)
+def add_pharmacy_inventory(
+    pharmacy_id: int,
+    item_in: schemas.InventoryMedicineCreate,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    medicine = db.query(models.Medicine).filter(models.Medicine.name == item_in.name, models.Medicine.dosage == item_in.dosage).first()
+    if not medicine:
+        medicine = models.Medicine(
+            name=item_in.name,
+            dosage=item_in.dosage,
+            category=item_in.category,
+            description=item_in.description,
+            manufacturer=item_in.manufacturer
+        )
+        db.add(medicine)
+        db.commit()
+        db.refresh(medicine)
+
+    status_str = "In Stock"
+    if item_in.stock_quantity <= 0:
+        status_str = "Out of Stock"
+    elif item_in.stock_quantity <= 20:
+        status_str = "Low Stock"
+
+    expiry_dt = None
+    if item_in.expiry_date:
+        try:
+            from datetime import datetime
+            expiry_dt = datetime.strptime(item_in.expiry_date, "%Y-%m-%d")
+        except Exception:
+            pass
+
+    new_inventory = models.Inventory(
+        pharmacy_id=pharmacy_id,
+        medicine_id=medicine.id,
+        batch_number=item_in.batch_number,
+        stock_quantity=item_in.stock_quantity,
+        price=item_in.price,
+        expiry_date=expiry_dt,
+        status=status_str
+    )
+    db.add(new_inventory)
+    db.commit()
+    db.refresh(new_inventory)
+    return new_inventory
+
+
+@router.put("/{pharmacy_id}/inventory/{inventory_id}", response_model=schemas.InventoryResponse)
+def update_pharmacy_inventory(
+    pharmacy_id: int,
+    inventory_id: int,
+    item_in: schemas.InventoryMedicineUpdate,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    inv = db.query(models.Inventory).filter(models.Inventory.id == inventory_id, models.Inventory.pharmacy_id == pharmacy_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    if item_in.batch_number is not None:
+        inv.batch_number = item_in.batch_number
+    if item_in.stock_quantity is not None:
+        inv.stock_quantity = item_in.stock_quantity
+        if inv.stock_quantity <= 0:
+            inv.status = "Out of Stock"
+        elif inv.stock_quantity <= 20:
+            inv.status = "Low Stock"
+        else:
+            inv.status = "In Stock"
+    if item_in.price is not None:
+        inv.price = item_in.price
+    if item_in.expiry_date is not None:
+        try:
+            from datetime import datetime
+            inv.expiry_date = datetime.strptime(item_in.expiry_date, "%Y-%m-%d")
+        except Exception:
+            pass
+
+    med = inv.medicine
+    if med:
+        if item_in.name is not None:
+            med.name = item_in.name
+        if item_in.dosage is not None:
+            med.dosage = item_in.dosage
+        if item_in.category is not None:
+            med.category = item_in.category
+        if item_in.description is not None:
+            med.description = item_in.description
+        if item_in.manufacturer is not None:
+            med.manufacturer = item_in.manufacturer
+
+    db.commit()
+    db.refresh(inv)
+    return inv
+
+
+@router.delete("/{pharmacy_id}/inventory/{inventory_id}")
+def delete_pharmacy_inventory(
+    pharmacy_id: int,
+    inventory_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    inv = db.query(models.Inventory).filter(models.Inventory.id == inventory_id, models.Inventory.pharmacy_id == pharmacy_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    db.delete(inv)
+    db.commit()
+    return {"message": "Inventory item deleted"}
+
+
