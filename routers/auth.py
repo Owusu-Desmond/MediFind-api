@@ -51,3 +51,36 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @router.get("/me", response_model=schemas.UserResponse)
 def read_users_me(current_user: models.User = Depends(deps.get_current_active_user)):
     return current_user
+
+@router.post("/forgot-password")
+def forgot_password(req: schemas.ForgotPasswordRequest, db: Session = Depends(deps.get_db)):
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No user account registered with this email address.")
+
+    access_token_expires = timedelta(minutes=15)
+    reset_token = auth.create_access_token(
+        data={"sub": user.email, "type": "password_reset"}, expires_delta=access_token_expires
+    )
+
+    return {
+        "message": "Password reset token generated successfully.",
+        "reset_token": reset_token,
+        "email": user.email,
+    }
+
+@router.post("/reset-password")
+def reset_password(req: schemas.ResetPasswordRequest, db: Session = Depends(deps.get_db)):
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    if not req.new_password or len(req.new_password.strip()) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters long.")
+
+    user.hashed_password = auth.get_password_hash(req.new_password)
+    db.commit()
+    db.refresh(user)
+
+    return {"message": "Password has been reset successfully."}
+

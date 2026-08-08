@@ -39,6 +39,15 @@ class TokenData(BaseModel):
     email: Optional[str] = None
     role: Optional[str] = None
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    new_password: str
+    reset_token: Optional[str] = None
+
+
 class PharmacyBase(BaseModel):
     name: str
     location: str
