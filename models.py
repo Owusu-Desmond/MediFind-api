@@ -89,11 +89,18 @@ class Medicine(Base):
     name = Column(String, index=True, nullable=False)
     generic_name = Column(String, nullable=True)
     dosage = Column(String, nullable=True)
+    dosage_instructions = Column(Text, nullable=True)
     category = Column(String, index=True, nullable=True)
     description = Column(Text, nullable=True)
     manufacturer = Column(String, nullable=True)
+    precautions = Column(Text, nullable=True)
+    side_effects = Column(Text, nullable=True)
+    tags = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
 
     inventory = relationship("Inventory", back_populates="medicine")
+
+
 
 class Inventory(Base):
     __tablename__ = "inventory"

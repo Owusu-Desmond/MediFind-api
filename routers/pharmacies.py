@@ -89,6 +89,31 @@ async def upload_certificate(
 
     return {"url": file_url, "filename": file.filename}
 
+
+@router.post("/upload-medicine-image")
+async def upload_medicine_image(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type '{ext}'. Allowed: PNG, JPG, JPEG, WEBP")
+
+    contents = await file.read()
+    try:
+        file_url = await storage.upload_file_to_supabase(
+            file_bytes=contents,
+            filename=file.filename,
+            content_type=file.content_type or "image/jpeg",
+            folder="medicines"
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {"url": file_url, "filename": file.filename}
+
+
 @router.post("/", response_model=schemas.PharmacyResponse)
 def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db), current_user: models.User = Depends(deps.get_current_active_user)):
     # Simple check: maybe only allow creation if it doesn't exist
@@ -274,13 +299,34 @@ def add_pharmacy_inventory(
         medicine = models.Medicine(
             name=item_in.name,
             dosage=item_in.dosage,
+            dosage_instructions=item_in.dosage_instructions,
             category=item_in.category,
             description=item_in.description,
-            manufacturer=item_in.manufacturer
+            manufacturer=item_in.manufacturer,
+            precautions=item_in.precautions,
+            side_effects=item_in.side_effects,
+            tags=item_in.tags,
+            image_url=item_in.image_url
         )
         db.add(medicine)
         db.commit()
         db.refresh(medicine)
+    else:
+        # Update existing medicine attributes if provided
+        if item_in.dosage_instructions:
+            medicine.dosage_instructions = item_in.dosage_instructions
+        if item_in.description:
+            medicine.description = item_in.description
+        if item_in.precautions:
+            medicine.precautions = item_in.precautions
+        if item_in.side_effects:
+            medicine.side_effects = item_in.side_effects
+        if item_in.tags:
+            medicine.tags = item_in.tags
+        if item_in.manufacturer:
+            medicine.manufacturer = item_in.manufacturer
+        if item_in.image_url:
+            medicine.image_url = item_in.image_url
 
     status_str = "In Stock"
     if item_in.stock_quantity <= 0:
@@ -348,16 +394,28 @@ def update_pharmacy_inventory(
             med.name = item_in.name
         if item_in.dosage is not None:
             med.dosage = item_in.dosage
+        if item_in.dosage_instructions is not None:
+            med.dosage_instructions = item_in.dosage_instructions
         if item_in.category is not None:
             med.category = item_in.category
         if item_in.description is not None:
             med.description = item_in.description
         if item_in.manufacturer is not None:
             med.manufacturer = item_in.manufacturer
+        if item_in.precautions is not None:
+            med.precautions = item_in.precautions
+        if item_in.side_effects is not None:
+            med.side_effects = item_in.side_effects
+        if item_in.tags is not None:
+            med.tags = item_in.tags
+        if item_in.image_url is not None:
+            med.image_url = item_in.image_url
 
     db.commit()
     db.refresh(inv)
     return inv
+
+
 
 
 @router.delete("/{pharmacy_id}/inventory/{inventory_id}")

@@ -13,8 +13,15 @@ try:
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS precautions TEXT;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS side_effects TEXT;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS tags VARCHAR;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS image_url VARCHAR;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_instructions TEXT;"))
 except Exception as e:
     print(f"[startup] WARNING: could not run create_all or schema migration — {e}")
+
+
 
 app = FastAPI(
     title="MediFind API",

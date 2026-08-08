@@ -93,9 +93,14 @@ class MedicineBase(BaseModel):
     name: str
     generic_name: Optional[str] = None
     dosage: Optional[str] = None
+    dosage_instructions: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
     manufacturer: Optional[str] = None
+    precautions: Optional[str] = None
+    side_effects: Optional[str] = None
+    tags: Optional[str] = None
+    image_url: Optional[str] = None
 
 class MedicineCreate(MedicineBase):
     pass
@@ -129,9 +134,14 @@ class InventoryResponse(InventoryBase):
 class InventoryMedicineCreate(BaseModel):
     name: str
     dosage: Optional[str] = None
+    dosage_instructions: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
     manufacturer: Optional[str] = None
+    precautions: Optional[str] = None
+    side_effects: Optional[str] = None
+    tags: Optional[str] = None
+    image_url: Optional[str] = None
     batch_number: Optional[str] = None
     stock_quantity: int = 0
     price: float = 0.0
@@ -140,13 +150,20 @@ class InventoryMedicineCreate(BaseModel):
 class InventoryMedicineUpdate(BaseModel):
     name: Optional[str] = None
     dosage: Optional[str] = None
+    dosage_instructions: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
     manufacturer: Optional[str] = None
+    precautions: Optional[str] = None
+    side_effects: Optional[str] = None
+    tags: Optional[str] = None
+    image_url: Optional[str] = None
     batch_number: Optional[str] = None
     stock_quantity: Optional[int] = None
     price: Optional[float] = None
     expiry_date: Optional[str] = None
+
+
 
 
 class ReservationItemBase(BaseModel):
