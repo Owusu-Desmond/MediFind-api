@@ -1,14 +1,24 @@
 import os
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas, deps, auth, storage
 import math
+from utils import calculate_pharmacy_open_status
 
 router = APIRouter(
     prefix="/api/pharmacies",
     tags=["Pharmacies"],
 )
+
+def enrich_pharmacy_response(pharmacy: models.Pharmacy) -> schemas.PharmacyResponse:
+    is_open, status_text = calculate_pharmacy_open_status(pharmacy.opening_hours)
+    res = schemas.PharmacyResponse.model_validate(pharmacy)
+    res.is_open = is_open
+    res.open_status_text = status_text
+    return res
+
 
 @router.get("/signed-url")
 async def get_signed_url(
@@ -24,14 +34,14 @@ async def get_signed_url(
     from dotenv import load_dotenv
     load_dotenv()
 
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_KEY", "")
     supabase_bucket = os.getenv("SUPABASE_BUCKET", "certificates")
 
     if not supabase_url or not supabase_key:
         raise HTTPException(status_code=500, detail="Supabase credentials not configured")
 
-    sign_url = f"{supabase_url}/storage/v1/object/sign/{supabase_bucket}/{object_path}"
+    url = f"{supabase_url.rstrip('/')}/storage/v1/object/sign/{supabase_bucket}/{object_path.lstrip('/')}"
     headers = {
         "Authorization": f"Bearer {supabase_key}",
         "apikey": supabase_key,
@@ -39,12 +49,12 @@ async def get_signed_url(
     }
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        res = await client.post(sign_url, headers=headers, json={"expiresIn": 3600})
+        res = await client.post(url, json={"expiresIn": 3600}, headers=headers)
 
     if res.status_code != 200:
         raise HTTPException(
             status_code=502,
-            detail=f"Supabase signed URL error (HTTP {res.status_code}): {res.text}",
+            detail=f"Supabase error ({res.status_code}): {res.text}"
         )
 
     data = res.json()
@@ -68,8 +78,7 @@ async def get_signed_url(
 
 @router.post("/upload-certificate")
 async def upload_certificate(
-    file: UploadFile = File(...),
-    current_user: models.User = Depends(deps.get_current_active_user)
+    file: UploadFile = File(...)
 ):
     ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
     ext = os.path.splitext(file.filename)[1].lower()
@@ -82,10 +91,10 @@ async def upload_certificate(
             file_bytes=contents,
             filename=file.filename,
             content_type=file.content_type or "application/octet-stream",
-            folder="certificates"
+            bucket_name="certificates"
         )
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to upload certificate to Supabase: {e}")
 
     return {"url": file_url, "filename": file.filename}
 
@@ -93,7 +102,6 @@ async def upload_certificate(
 @router.post("/upload-medicine-image")
 async def upload_medicine_image(
     file: UploadFile = File(...),
-    current_user: models.User = Depends(deps.get_current_active_user)
 ):
     ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     ext = os.path.splitext(file.filename)[1].lower()
@@ -106,16 +114,16 @@ async def upload_medicine_image(
             file_bytes=contents,
             filename=file.filename,
             content_type=file.content_type or "image/jpeg",
-            folder="medicines"
+            bucket_name="medicines"
         )
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to upload medicine image to Supabase: {e}")
 
     return {"url": file_url, "filename": file.filename}
 
 
 @router.post("/", response_model=schemas.PharmacyResponse)
-def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db), current_user: models.User = Depends(deps.get_current_active_user)):
+def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db)):
     # Simple check: maybe only allow creation if it doesn't exist
     existing = db.query(models.Pharmacy).filter(models.Pharmacy.license_number == pharmacy.license_number).first()
     if existing:
@@ -125,11 +133,12 @@ def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps
     db.add(new_pharmacy)
     db.commit()
     db.refresh(new_pharmacy)
-    return new_pharmacy
+    return enrich_pharmacy_response(new_pharmacy)
 
 @router.get("/", response_model=List[schemas.PharmacyResponse])
 def get_pharmacies(skip: int = 0, limit: int = 100, db: Session = Depends(deps.get_db)):
-    return db.query(models.Pharmacy).offset(skip).limit(limit).all()
+    pharmacies = db.query(models.Pharmacy).offset(skip).limit(limit).all()
+    return [enrich_pharmacy_response(p) for p in pharmacies]
 
 @router.get("/nearby", response_model=List[schemas.PharmacyResponse])
 def get_nearby_pharmacies(lat: float, lng: float, radius_km: float = 10.0, db: Session = Depends(deps.get_db)):
@@ -148,7 +157,7 @@ def get_nearby_pharmacies(lat: float, lng: float, radius_km: float = 10.0, db: S
             distance = R * c
             if distance <= radius_km:
                 nearby.append(p)
-    return nearby
+    return [enrich_pharmacy_response(p) for p in nearby]
 
 @router.patch("/{pharmacy_id}/status", response_model=schemas.PharmacyResponse)
 def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(deps.get_db), current_admin: models.User = Depends(deps.get_current_admin)):
@@ -183,7 +192,7 @@ def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(
 
     db.commit()
     db.refresh(pharmacy)
-    return pharmacy
+    return enrich_pharmacy_response(pharmacy)
 
 @router.put("/{pharmacy_id}", response_model=schemas.PharmacyResponse)
 def update_pharmacy(
@@ -208,7 +217,7 @@ def update_pharmacy(
 
     db.commit()
     db.refresh(pharmacy)
-    return pharmacy
+    return enrich_pharmacy_response(pharmacy)
 
 @router.delete("/{pharmacy_id}")
 def delete_pharmacy(
@@ -240,17 +249,17 @@ def get_my_pharmacy(
     if staff:
         pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == staff.pharmacy_id).first()
         if pharmacy:
-            return pharmacy
+            return enrich_pharmacy_response(pharmacy)
 
     # 2. Check pharmacy by user email
     pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.email == current_user.email).first()
     if pharmacy:
-        return pharmacy
+        return enrich_pharmacy_response(pharmacy)
 
     # 3. Fallback: get first available pharmacy or create a default demo pharmacy
     pharmacy = db.query(models.Pharmacy).first()
     if pharmacy:
-        return pharmacy
+        return enrich_pharmacy_response(pharmacy)
 
     default_pharmacy = models.Pharmacy(
         name="Ghana National Pharmacy (Accra Central)",
@@ -271,7 +280,7 @@ def get_my_pharmacy(
     db.add(staff_link)
     db.commit()
 
-    return default_pharmacy
+    return enrich_pharmacy_response(default_pharmacy)
 
 
 @router.get("/{pharmacy_id}/inventory", response_model=List[schemas.InventoryResponse])

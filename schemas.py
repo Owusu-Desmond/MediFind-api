@@ -58,6 +58,7 @@ class PharmacyBase(BaseModel):
     email: Optional[EmailStr] = None
     delivery_offered: bool = False
     opening_hours: Optional[str] = None
+    gps_address: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
@@ -75,6 +76,7 @@ class PharmacyUpdate(BaseModel):
     email: Optional[EmailStr] = None
     delivery_offered: Optional[bool] = None
     opening_hours: Optional[str] = None
+    gps_address: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
@@ -85,6 +87,8 @@ class PharmacyResponse(PharmacyBase):
     status: str
     verified: bool
     date_submitted: datetime
+    is_open: bool = True
+    open_status_text: Optional[str] = None
 
     class Config:
         from_attributes = True

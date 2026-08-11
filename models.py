@@ -62,6 +62,7 @@ class Pharmacy(Base):
     date_submitted = Column(DateTime(timezone=True), server_default=func.now())
     delivery_offered = Column(Boolean, default=False)
     opening_hours = Column(String, nullable=True)
+    gps_address = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
     verified = Column(Boolean, default=False)

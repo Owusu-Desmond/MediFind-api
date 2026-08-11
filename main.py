@@ -18,6 +18,7 @@ try:
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS tags VARCHAR;"))
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS image_url VARCHAR;"))
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_instructions TEXT;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS gps_address VARCHAR;"))
 except Exception as e:
     print(f"[startup] WARNING: could not run create_all or schema migration — {e}")
 
