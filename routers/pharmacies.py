@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import models, schemas, deps, auth, storage
 import math
-from utils import calculate_pharmacy_open_status
+from utils import calculate_pharmacy_open_status, send_approval_email, generate_secure_password
 
 router = APIRouter(
     prefix="/api/pharmacies",
@@ -170,12 +170,13 @@ def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid status")
     
-    # If approved, we should create a user account for the pharmacist if it doesn't exist
+    # If approved, we should create or update user account for the pharmacist & send email
     if pharmacy.status == models.PharmacyStatus.Approved and pharmacy.email:
         user = db.query(models.User).filter(models.User.email == pharmacy.email).first()
+        raw_password = generate_secure_password()
         if not user:
-            # Create a default password for the pharmacist
-            default_password = auth.get_password_hash("pharmacist123")
+            # Create a generated password for the pharmacist
+            default_password = auth.get_password_hash(raw_password)
             new_user = models.User(
                 email=pharmacy.email,
                 name=pharmacy.pharmacist_name or f"{pharmacy.name} Admin",
@@ -189,6 +190,19 @@ def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(
             # Link staff
             staff = models.PharmacyStaff(user_id=new_user.id, pharmacy_id=pharmacy.id)
             db.add(staff)
+            db.commit()
+        else:
+            # Update password so new approval generates fresh valid credentials
+            user.hashed_password = auth.get_password_hash(raw_password)
+            db.commit()
+
+        # Send approval notification email with login credentials and link
+        send_approval_email(
+            email=pharmacy.email,
+            pharmacy_name=pharmacy.name,
+            password=raw_password,
+            login_url="http://localhost:3001/"
+        )
 
     db.commit()
     db.refresh(pharmacy)
@@ -441,5 +455,94 @@ def delete_pharmacy_inventory(
     db.delete(inv)
     db.commit()
     return {"message": "Inventory item deleted"}
+
+
+@router.get("/{pharmacy_id}/staff", response_model=List[schemas.StaffResponse])
+def get_pharmacy_staff(
+    pharmacy_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    staff_records = db.query(models.PharmacyStaff).filter(models.PharmacyStaff.pharmacy_id == pharmacy_id).all()
+    results = []
+    for s in staff_records:
+        u = db.query(models.User).filter(models.User.id == s.user_id).first()
+        if u:
+            results.append({
+                "id": s.id,
+                "user_id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "phone": u.phone,
+                "role": u.role.value if hasattr(u.role, "value") else str(u.role)
+            })
+    return results
+
+
+@router.post("/{pharmacy_id}/staff", response_model=schemas.StaffResponse)
+def add_pharmacy_staff(
+    pharmacy_id: int,
+    staff_in: schemas.AddStaffRequest,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    existing_user = db.query(models.User).filter(models.User.email == staff_in.email).first()
+    if existing_user:
+        existing_link = db.query(models.PharmacyStaff).filter(
+            models.PharmacyStaff.user_id == existing_user.id,
+            models.PharmacyStaff.pharmacy_id == pharmacy_id
+        ).first()
+        if existing_link:
+            raise HTTPException(status_code=400, detail="This email is already registered as staff for this pharmacy.")
+        target_user = existing_user
+    else:
+        hashed_pw = auth.get_password_hash(staff_in.password)
+        target_user = models.User(
+            email=staff_in.email,
+            name=staff_in.name,
+            hashed_password=hashed_pw,
+            phone=staff_in.phone,
+            role=models.UserRole.Pharmacist
+        )
+        db.add(target_user)
+        db.commit()
+        db.refresh(target_user)
+
+    staff_link = models.PharmacyStaff(user_id=target_user.id, pharmacy_id=pharmacy_id)
+    db.add(staff_link)
+    db.commit()
+    db.refresh(staff_link)
+
+    return {
+        "id": staff_link.id,
+        "user_id": target_user.id,
+        "name": target_user.name,
+        "email": target_user.email,
+        "phone": target_user.phone,
+        "role": target_user.role.value if hasattr(target_user.role, "value") else str(target_user.role)
+    }
+
+
+@router.delete("/{pharmacy_id}/staff/{staff_id}")
+def delete_pharmacy_staff(
+    pharmacy_id: int,
+    staff_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    staff_link = db.query(models.PharmacyStaff).filter(
+        models.PharmacyStaff.id == staff_id,
+        models.PharmacyStaff.pharmacy_id == pharmacy_id
+    ).first()
+    if not staff_link:
+        raise HTTPException(status_code=404, detail="Staff member record not found.")
+
+    db.delete(staff_link)
+    db.commit()
+    return {"message": "Staff member removed from pharmacy."}
 
 

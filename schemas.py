@@ -207,3 +207,24 @@ class ReservationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+class AddStaffRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    phone: Optional[str] = None
+
+class StaffResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    role: str
+
+    class Config:
+        from_attributes = True

@@ -84,3 +84,21 @@ def reset_password(req: schemas.ResetPasswordRequest, db: Session = Depends(deps
 
     return {"message": "Password has been reset successfully."}
 
+
+@router.post("/change-password")
+def change_password(
+    req: schemas.ChangePasswordRequest,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    if not auth.verify_password(req.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect current password.")
+    if not req.new_password or len(req.new_password.strip()) < 4:
+        raise HTTPException(status_code=400, detail="New password must be at least 4 characters long.")
+
+    current_user.hashed_password = auth.get_password_hash(req.new_password)
+    db.commit()
+    db.refresh(current_user)
+
+    return {"message": "Password changed successfully."}
+

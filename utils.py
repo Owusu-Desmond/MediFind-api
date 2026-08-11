@@ -1,9 +1,17 @@
 import json
 import re
+import secrets
+import string
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 GHANA_TZ = ZoneInfo("UTC")  # Ghana (GMT) is UTC+0 year-round
+
+def generate_secure_password(length: int = 10) -> str:
+    """Generates a unique, secure random password for approved pharmacy staff."""
+    alphabet = string.ascii_letters + string.digits
+    rand_str = ''.join(secrets.choice(alphabet) for _ in range(6))
+    return f"MediPass-{rand_str}"
 
 def parse_time_str(t_str: str) -> time:
     """Parses time string formats like '08:00', '8:00 AM', '9:00 PM', '21:00' into datetime.time."""
@@ -111,3 +119,6 @@ def calculate_pharmacy_open_status(opening_hours: str | None) -> tuple[bool, str
             pass
 
     return True, "Open Today"
+
+
+from email_service import send_approval_email

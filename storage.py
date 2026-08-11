@@ -44,8 +44,6 @@ async def upload_file_to_supabase(
         "x-upsert": "true",
     }
 
-    print(f"[Supabase] Uploading file to bucket '{bucket_name}': {upload_url}")
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         res = await client.post(upload_url, content=file_bytes, headers=headers)
 
