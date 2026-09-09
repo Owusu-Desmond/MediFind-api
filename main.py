@@ -30,23 +30,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS configuration
-# NOTE: "*" (wildcard) CANNOT be used together with allow_credentials=True.
-# Browsers reject responses that combine credentials mode with a wildcard origin.
-# All allowed origins must be listed explicitly.
-origins = [
-    "http://localhost",
-    "http://localhost:3000",   # Next.js admin dashboard
-    "http://localhost:3001",   # Next.js pharmacy portal (if on 3001)
-    "http://localhost:8080",
-    "http://localhost:8081",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-]
-
+# CORS configuration supporting localhost, 127.0.0.1, and all LAN origins (e.g. 172.x, 192.x, 10.x)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -203,7 +203,9 @@ class ReservationResponse(BaseModel):
     total_price: float
     notes: Optional[str] = None
     ref_number: Optional[str] = None
-    items: List[ReservationItemResponse]
+    pharmacy: Optional[PharmacyResponse] = None
+    patient: Optional[UserResponse] = None
+    items: List[ReservationItemResponse] = []
 
     class Config:
         from_attributes = True
