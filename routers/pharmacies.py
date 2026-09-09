@@ -1,9 +1,10 @@
 import os
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
-import models, schemas, deps, auth, storage
+import models, schemas, deps, auth, storage, paystack_service
 import math
 from utils import calculate_pharmacy_open_status, send_approval_email, generate_secure_password
 
@@ -544,5 +545,123 @@ def delete_pharmacy_staff(
     db.delete(staff_link)
     db.commit()
     return {"message": "Staff member removed from pharmacy."}
+
+
+@router.post("/{pharmacy_id}/paystack/subaccount", response_model=schemas.PharmacyPayoutResponse)
+async def setup_pharmacy_subaccount(
+    pharmacy_id: int,
+    payout_data: schemas.PharmacyPayoutSetupRequest,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    """
+    Configure payout details and register/link Paystack subaccount for the pharmacy.
+    """
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    # Verify authorization
+    if current_user.role == models.UserRole.Pharmacist:
+        staff = db.query(models.PharmacyStaff).filter(
+            models.PharmacyStaff.user_id == current_user.id,
+            models.PharmacyStaff.pharmacy_id == pharmacy_id
+        ).first()
+        if not staff and pharmacy.email != current_user.email:
+            raise HTTPException(status_code=403, detail="Not authorized to configure payout for this pharmacy")
+    elif current_user.role != models.UserRole.Admin:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # Determine settlement bank code
+    settlement_bank = payout_data.bank_code or (
+        "MTN" if payout_data.mobile_money_provider == "MTN" else
+        "VOD" if payout_data.mobile_money_provider in ("VOD", "Telecel", "Vodafone") else
+        "ATL" if payout_data.mobile_money_provider in ("ATL", "AirtelTigo", "AT") else
+        "040100" # fallback GCB
+    )
+
+    account_num = payout_data.account_number or payout_data.mobile_money_number or ""
+
+    # Call Paystack API
+    paystack_res = await paystack_service.create_paystack_subaccount(
+        business_name=pharmacy.name,
+        settlement_bank=settlement_bank,
+        account_number=account_num,
+        description=f"MediFind Payout for {pharmacy.name} ({pharmacy.license_number})"
+    )
+
+    now = datetime.now(timezone.utc)
+
+    # Update pharmacy record
+    pharmacy.payment_account_type = payout_data.payment_account_type
+    pharmacy.bank_name = payout_data.bank_name
+    pharmacy.bank_code = settlement_bank
+    pharmacy.account_name = payout_data.account_name
+    pharmacy.account_number = account_num
+    pharmacy.mobile_money_provider = payout_data.mobile_money_provider
+    pharmacy.mobile_money_number = payout_data.mobile_money_number
+
+    if paystack_res.get("status") and paystack_res.get("subaccount_code"):
+        pharmacy.paystack_subaccount_code = paystack_res["subaccount_code"]
+        pharmacy.paystack_subaccount_id = paystack_res.get("subaccount_id")
+        pharmacy.paystack_subaccount_status = "ACTIVE"
+        pharmacy.payment_account_verified = True
+        pharmacy.payment_account_verified_at = now
+    else:
+        pharmacy.paystack_subaccount_status = "PENDING"
+        pharmacy.payment_account_verified = False
+
+    db.commit()
+    db.refresh(pharmacy)
+
+    # Mask account number for safe frontend display (e.g. "024****890")
+    masked_account = account_num
+    if len(account_num) > 4:
+        masked_account = f"{account_num[:3]}****{account_num[-3:]}"
+
+    return schemas.PharmacyPayoutResponse(
+        pharmacy_id=pharmacy.id,
+        paystack_subaccount_code=pharmacy.paystack_subaccount_code,
+        paystack_subaccount_status=pharmacy.paystack_subaccount_status,
+        payment_account_type=pharmacy.payment_account_type,
+        bank_name=pharmacy.bank_name,
+        account_name=pharmacy.account_name,
+        account_number_masked=masked_account,
+        mobile_money_provider=pharmacy.mobile_money_provider,
+        payment_account_verified=pharmacy.payment_account_verified or False,
+        message=paystack_res.get("message", "Payout setup updated"),
+    )
+
+
+@router.get("/{pharmacy_id}/paystack/subaccount", response_model=schemas.PharmacyPayoutResponse)
+def get_pharmacy_subaccount(
+    pharmacy_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    """
+    Get safe payout & subaccount status for a pharmacy with masked sensitive account number.
+    """
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+
+    account_num = pharmacy.account_number or pharmacy.mobile_money_number or ""
+    masked_account = account_num
+    if len(account_num) > 4:
+        masked_account = f"{account_num[:3]}****{account_num[-3:]}"
+
+    return schemas.PharmacyPayoutResponse(
+        pharmacy_id=pharmacy.id,
+        paystack_subaccount_code=pharmacy.paystack_subaccount_code,
+        paystack_subaccount_status=pharmacy.paystack_subaccount_status or "PENDING",
+        payment_account_type=pharmacy.payment_account_type,
+        bank_name=pharmacy.bank_name,
+        account_name=pharmacy.account_name,
+        account_number_masked=masked_account,
+        mobile_money_provider=pharmacy.mobile_money_provider,
+        payment_account_verified=pharmacy.payment_account_verified or False,
+    )
+
 
 

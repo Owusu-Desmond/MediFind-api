@@ -21,6 +21,7 @@ class PharmacyStatus(str, enum.Enum):
 class ReservationStatus(str, enum.Enum):
     Pending_Pharmacy_Review = "Pending Pharmacy Review"
     Approved = "Approved"
+    Reserved = "Reserved"
     Paid = "Paid"
     Ready_for_Pickup = "Ready for Pickup"
     Preparing = "Preparing"
@@ -28,7 +29,19 @@ class ReservationStatus(str, enum.Enum):
     Delivered = "Delivered"
     Collected = "Collected"
     Cancelled = "Cancelled"
+    Expired = "Expired"
     Rejected = "Rejected"
+
+class PaymentMethod(str, enum.Enum):
+    PAYSTACK = "PAYSTACK"
+    CASH = "CASH"
+
+class PaymentStatus(str, enum.Enum):
+    UNPAID = "UNPAID"
+    PENDING = "PENDING"
+    PAID = "PAID"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
 
 class User(Base):
     __tablename__ = "users"
@@ -45,7 +58,7 @@ class User(Base):
     date_created = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    reservations = relationship("Reservation", back_populates="patient")
+    reservations = relationship("Reservation", back_populates="patient", foreign_keys="Reservation.patient_id")
 
 class Pharmacy(Base):
     __tablename__ = "pharmacies"
@@ -68,10 +81,25 @@ class Pharmacy(Base):
     verified = Column(Boolean, default=False)
     certificate_url = Column(String, nullable=True)
 
+    # Paystack & Payout details
+    paystack_subaccount_code = Column(String, nullable=True) # e.g. "ACCT_xxxx"
+    paystack_subaccount_id = Column(String, nullable=True)
+    paystack_subaccount_status = Column(String, default="PENDING") # "ACTIVE", "PENDING", "FAILED"
+    payment_account_type = Column(String, nullable=True) # "bank" or "mobile_money"
+    bank_name = Column(String, nullable=True)
+    bank_code = Column(String, nullable=True)
+    account_name = Column(String, nullable=True)
+    account_number = Column(String, nullable=True)
+    mobile_money_provider = Column(String, nullable=True)
+    mobile_money_number = Column(String, nullable=True)
+    payment_account_verified = Column(Boolean, default=False)
+    payment_account_verified_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     staff = relationship("PharmacyStaff", back_populates="pharmacy", cascade="all, delete-orphan")
     inventory = relationship("Inventory", back_populates="pharmacy", cascade="all, delete-orphan")
     reservations = relationship("Reservation", back_populates="pharmacy", cascade="all, delete-orphan")
+    payments = relationship("PaymentTransaction", back_populates="pharmacy")
 
 class PharmacyStaff(Base):
     __tablename__ = "pharmacy_staff"
@@ -101,8 +129,6 @@ class Medicine(Base):
 
     inventory = relationship("Inventory", back_populates="medicine")
 
-
-
 class Inventory(Base):
     __tablename__ = "inventory"
 
@@ -113,7 +139,7 @@ class Inventory(Base):
     stock_quantity = Column(Integer, default=0, nullable=False)
     price = Column(Float, nullable=False)
     expiry_date = Column(DateTime(timezone=True), nullable=True)
-    status = Column(String, default="In Stock")  # Can be computed
+    status = Column(String, default="In Stock")
 
     pharmacy = relationship("Pharmacy", back_populates="inventory")
     medicine = relationship("Medicine", back_populates="inventory")
@@ -128,16 +154,30 @@ class Reservation(Base):
     fulfillment_method = Column(String, nullable=True) # "Pickup" or "Delivery"
     fulfillment_address = Column(String, nullable=True)
     fulfillment_time = Column(String, nullable=True)
-    payment_preference = Column(String, nullable=True)
-    status = Column(Enum(ReservationStatus), default=ReservationStatus.Pending_Pharmacy_Review)
+    payment_preference = Column(String, nullable=True) # Legacy display string: "Pay Online" or "Pay at Pharmacy"
+    
+    # Separate Status & Payment fields
+    status = Column(Enum(ReservationStatus, native_enum=False), default=ReservationStatus.Pending_Pharmacy_Review)
+    payment_method = Column(Enum(PaymentMethod, native_enum=False), nullable=True, default=None)
+    payment_status = Column(Enum(PaymentStatus, native_enum=False), default=PaymentStatus.UNPAID)
+    
     total_price = Column(Float, default=0.0)
     notes = Column(Text, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
     ref_number = Column(String, unique=True, index=True, nullable=True)
+    reservation_code = Column(String, unique=True, index=True, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    payment_verified_at = Column(DateTime(timezone=True), nullable=True)
+    
+    cash_payment_confirmed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cash_payment_confirmed_at = Column(DateTime(timezone=True), nullable=True)
 
-    patient = relationship("User", back_populates="reservations")
+    patient = relationship("User", back_populates="reservations", foreign_keys=[patient_id])
+    cash_confirmed_by = relationship("User", foreign_keys=[cash_payment_confirmed_by_id])
     pharmacy = relationship("Pharmacy", back_populates="reservations")
-    items = relationship("ReservationItem", back_populates="reservation")
-    payment = relationship("Payment", back_populates="reservation", uselist=False)
+    items = relationship("ReservationItem", back_populates="reservation", cascade="all, delete-orphan")
+    payments = relationship("PaymentTransaction", back_populates="reservation", cascade="all, delete-orphan")
 
 class ReservationItem(Base):
     __tablename__ = "reservation_items"
@@ -151,15 +191,34 @@ class ReservationItem(Base):
     reservation = relationship("Reservation", back_populates="items")
     medicine = relationship("Medicine")
 
-class Payment(Base):
-    __tablename__ = "payments"
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
     reservation_id = Column(Integer, ForeignKey("reservations.id"), nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    payment_method = Column(Enum(PaymentMethod, native_enum=False), default=PaymentMethod.PAYSTACK, nullable=False)
+    payment_status = Column(Enum(PaymentStatus, native_enum=False), default=PaymentStatus.PENDING, nullable=False)
+    
     amount = Column(Float, nullable=False)
-    method = Column(String, nullable=False) # e.g., "Paystack"
-    status = Column(String, nullable=False, default="Pending") # "Pending", "Success", "Failed"
-    reference = Column(String, nullable=True, unique=True)
-    date_created = Column(DateTime(timezone=True), server_default=func.now())
+    currency = Column(String, default="GHS", nullable=False)
+    platform_fee = Column(Float, default=0.0, nullable=False)
+    pharmacy_amount = Column(Float, nullable=False)
+    
+    paystack_reference = Column(String, unique=True, index=True, nullable=True)
+    paystack_transaction_id = Column(String, nullable=True)
+    paystack_status = Column(String, nullable=True) # e.g. "success", "failed", "abandoned"
+    
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    reservation = relationship("Reservation", back_populates="payment")
+    reservation = relationship("Reservation", back_populates="payments")
+    pharmacy = relationship("Pharmacy", back_populates="payments")
+    patient = relationship("User")
+
+# Keep legacy Payment alias for backwards compatibility
+Payment = PaymentTransaction
+

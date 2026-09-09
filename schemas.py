@@ -62,6 +62,14 @@ class PharmacyBase(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
+    # Payout details
+    payment_account_type: Optional[str] = None # "bank" or "mobile_money"
+    bank_name: Optional[str] = None
+    bank_code: Optional[str] = None
+    account_name: Optional[str] = None
+    account_number: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+    mobile_money_number: Optional[str] = None
 
 class PharmacyCreate(PharmacyBase):
     pass
@@ -81,6 +89,34 @@ class PharmacyUpdate(BaseModel):
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
     status: Optional[str] = None
+    payment_account_type: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_code: Optional[str] = None
+    account_name: Optional[str] = None
+    account_number: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+    mobile_money_number: Optional[str] = None
+
+class PharmacyPayoutSetupRequest(BaseModel):
+    payment_account_type: str # "bank" or "mobile_money"
+    bank_name: Optional[str] = None
+    bank_code: Optional[str] = None
+    account_name: str
+    account_number: str # Bank account number or mobile money number
+    mobile_money_provider: Optional[str] = None # e.g. "MTN", "VOD", "ATL"
+    mobile_money_number: Optional[str] = None
+
+class PharmacyPayoutResponse(BaseModel):
+    pharmacy_id: int
+    paystack_subaccount_code: Optional[str] = None
+    paystack_subaccount_status: str = "PENDING"
+    payment_account_type: Optional[str] = None
+    bank_name: Optional[str] = None
+    account_name: Optional[str] = None
+    account_number_masked: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+    payment_account_verified: bool = False
+    message: Optional[str] = None
 
 class PharmacyResponse(PharmacyBase):
     id: int
@@ -89,6 +125,9 @@ class PharmacyResponse(PharmacyBase):
     date_submitted: datetime
     is_open: bool = True
     open_status_text: Optional[str] = None
+    paystack_subaccount_code: Optional[str] = None
+    paystack_subaccount_status: Optional[str] = "PENDING"
+    payment_account_verified: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -167,9 +206,6 @@ class InventoryMedicineUpdate(BaseModel):
     price: Optional[float] = None
     expiry_date: Optional[str] = None
 
-
-
-
 class ReservationItemBase(BaseModel):
     medicine_id: int
     quantity: int
@@ -185,10 +221,12 @@ class ReservationItemResponse(ReservationItemBase):
 class ReservationCreate(BaseModel):
     pharmacy_id: int
     items: List[ReservationItemBase]
-    fulfillment_method: Optional[str] = None
+    fulfillment_method: Optional[str] = None # "Pickup" or "Delivery"
     fulfillment_address: Optional[str] = None
     fulfillment_time: Optional[str] = None
     notes: Optional[str] = None
+    payment_method: Optional[str] = None # "PAYSTACK" or "CASH"
+    payment_preference: Optional[str] = None # "Pay Online" or "Pay at Pharmacy"
 
 class ReservationResponse(BaseModel):
     id: int
@@ -200,12 +238,77 @@ class ReservationResponse(BaseModel):
     fulfillment_time: Optional[str] = None
     payment_preference: Optional[str] = None
     status: str
+    payment_method: Optional[str] = None
+    payment_status: Optional[str] = "UNPAID"
     total_price: float
     notes: Optional[str] = None
+    rejection_reason: Optional[str] = None
     ref_number: Optional[str] = None
+    reservation_code: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    payment_verified_at: Optional[datetime] = None
+    cash_payment_confirmed_at: Optional[datetime] = None
     pharmacy: Optional[PharmacyResponse] = None
     patient: Optional[UserResponse] = None
     items: List[ReservationItemResponse] = []
+
+    class Config:
+        from_attributes = True
+
+class PaymentInitializeRequest(BaseModel):
+    reservation_id: int
+    callback_url: Optional[str] = None
+
+class PaymentInitializeResponse(BaseModel):
+    status: bool
+    authorization_url: str
+    access_code: Optional[str] = None
+    reference: str
+    amount: float
+    currency: str = "GHS"
+    platform_fee: float = 0.0
+    pharmacy_amount: float
+    is_mock: bool = False
+
+class PaymentVerifyResponse(BaseModel):
+    status: str # "Success" or "Failed"
+    message: str
+    reservation_id: int
+    reservation_status: str
+    payment_status: str
+    payment_method: str
+    amount: float
+    currency: str = "GHS"
+    reference: str
+    paid_at: Optional[datetime] = None
+
+class CashPaymentConfirmResponse(BaseModel):
+    success: bool
+    message: str
+    reservation_id: int
+    reservation_status: str
+    payment_status: str
+    payment_method: str
+    amount: float
+    confirmed_by_user_id: int
+    confirmed_at: datetime
+
+class PaymentTransactionResponse(BaseModel):
+    id: int
+    reservation_id: int
+    pharmacy_id: int
+    patient_id: int
+    payment_method: str
+    payment_status: str
+    amount: float
+    currency: str
+    platform_fee: float
+    pharmacy_amount: float
+    paystack_reference: Optional[str] = None
+    paystack_status: Optional[str] = None
+    paid_at: Optional[datetime] = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -230,3 +333,4 @@ class StaffResponse(BaseModel):
 
     class Config:
         from_attributes = True
+

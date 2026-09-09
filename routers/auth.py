@@ -16,13 +16,19 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(deps.get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
     
     hashed_password = auth.get_password_hash(user_in.password)
+    user_role = models.UserRole.Patient
+    if user_in.role:
+        for r in models.UserRole:
+            if r.value.lower() == user_in.role.lower():
+                user_role = r
+                break
     new_user = models.User(
         email=user_in.email,
         name=user_in.name,
         hashed_password=hashed_password,
         phone=user_in.phone,
         location=user_in.location,
-        role=models.UserRole.Patient # Default role
+        role=user_role
     )
     db.add(new_user)
     db.commit()

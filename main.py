@@ -19,6 +19,36 @@ try:
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS image_url VARCHAR;"))
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_instructions TEXT;"))
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS gps_address VARCHAR;"))
+        
+        # Pharmacy Payout & Paystack columns
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_code VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_id VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_status VARCHAR DEFAULT 'PENDING';"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS payment_account_type VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS bank_name VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS bank_code VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS account_name VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS account_number VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS mobile_money_provider VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS mobile_money_number VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS payment_account_verified BOOLEAN DEFAULT FALSE;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS payment_account_verified_at TIMESTAMP WITH TIME ZONE;"))
+        
+        # Reservation Payment & Status columns & type conversions
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_method VARCHAR DEFAULT 'CASH';"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_status VARCHAR DEFAULT 'UNPAID';"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS reservation_code VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_verified_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_payment_confirmed_by_id INTEGER;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_payment_confirmed_at TIMESTAMP WITH TIME ZONE;"))
+        
+        # Convert enum columns to VARCHAR to support all status additions safely
+        conn.execute(text("ALTER TABLE reservations ALTER COLUMN status TYPE VARCHAR USING status::VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ALTER COLUMN payment_status TYPE VARCHAR USING payment_status::VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ALTER COLUMN payment_method TYPE VARCHAR USING payment_method::VARCHAR;"))
+    print("[startup] Database schema verified and migrations applied successfully.")
 except Exception as e:
     print(f"[startup] WARNING: could not run create_all or schema migration — {e}")
 
