@@ -172,6 +172,7 @@ class Reservation(Base):
     
     cash_payment_confirmed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     cash_payment_confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    is_hidden_by_patient = Column(Boolean, default=False, nullable=False)
 
     patient = relationship("User", back_populates="reservations", foreign_keys=[patient_id])
     cash_confirmed_by = relationship("User", foreign_keys=[cash_payment_confirmed_by_id])

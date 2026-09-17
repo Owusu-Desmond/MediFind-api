@@ -35,6 +35,12 @@ try:
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS payment_account_verified_at TIMESTAMP WITH TIME ZONE;"))
         
         # Reservation Payment & Status columns & type conversions
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS rejection_reason TEXT;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS ref_number VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_preference VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS fulfillment_address VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS fulfillment_time VARCHAR;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS notes TEXT;"))
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_method VARCHAR DEFAULT 'CASH';"))
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_status VARCHAR DEFAULT 'UNPAID';"))
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS reservation_code VARCHAR;"))
@@ -43,6 +49,7 @@ try:
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_verified_at TIMESTAMP WITH TIME ZONE;"))
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_payment_confirmed_by_id INTEGER;"))
         conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_payment_confirmed_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS is_hidden_by_patient BOOLEAN DEFAULT FALSE;"))
         
         # Convert enum columns to VARCHAR to support all status additions safely
         conn.execute(text("ALTER TABLE reservations ALTER COLUMN status TYPE VARCHAR USING status::VARCHAR;"))

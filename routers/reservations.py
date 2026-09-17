@@ -154,7 +154,10 @@ def get_reservations(
     query = db.query(models.Reservation)
 
     if current_user.role == models.UserRole.Patient:
-        query = query.filter(models.Reservation.patient_id == current_user.id)
+        query = query.filter(
+            models.Reservation.patient_id == current_user.id,
+            models.Reservation.is_hidden_by_patient == False
+        )
     elif current_user.role == models.UserRole.Pharmacist:
         staff = db.query(models.PharmacyStaff).filter(models.PharmacyStaff.user_id == current_user.id).all()
         pharmacy_ids = [s.pharmacy_id for s in staff]
@@ -408,3 +411,46 @@ def update_fulfillment_payment(
     db.commit()
     db.refresh(res)
     return res
+
+@router.post("/{res_id}/clear", response_model=schemas.ReservationResponse)
+def clear_single_reservation(
+    res_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    res = db.query(models.Reservation).filter(models.Reservation.id == res_id).first()
+    if not res:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+
+    if current_user.role == models.UserRole.Patient and res.patient_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to clear this reservation")
+
+    res.is_hidden_by_patient = True
+    db.commit()
+    db.refresh(res)
+    return res
+
+@router.post("/clear-finished")
+def clear_all_finished_reservations(
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    if current_user.role != models.UserRole.Patient:
+        raise HTTPException(status_code=403, detail="Only patients can clear finished reservations")
+
+    finished_statuses = [
+        models.ReservationStatus.Delivered,
+        models.ReservationStatus.Collected,
+        models.ReservationStatus.Cancelled,
+        models.ReservationStatus.Expired,
+        models.ReservationStatus.Rejected,
+    ]
+
+    updated_count = db.query(models.Reservation).filter(
+        models.Reservation.patient_id == current_user.id,
+        models.Reservation.status.in_(finished_statuses),
+        models.Reservation.is_hidden_by_patient == False
+    ).update({models.Reservation.is_hidden_by_patient: True}, synchronize_session=False)
+
+    db.commit()
+    return {"success": True, "cleared_count": updated_count}

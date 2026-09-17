@@ -249,6 +249,7 @@ class ReservationResponse(BaseModel):
     paid_at: Optional[datetime] = None
     payment_verified_at: Optional[datetime] = None
     cash_payment_confirmed_at: Optional[datetime] = None
+    is_hidden_by_patient: Optional[bool] = False
     pharmacy: Optional[PharmacyResponse] = None
     patient: Optional[UserResponse] = None
     items: List[ReservationItemResponse] = []
