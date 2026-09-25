@@ -41,6 +41,9 @@ def search_medicines(q: str, lat: Optional[float] = None, lng: Optional[float] =
         inventories = db.query(models.Inventory).filter(models.Inventory.medicine_id == med.id).all()
         for inv in inventories:
             pharmacy = inv.pharmacy
+            # Exclude suspended or unapproved pharmacies from patient searches
+            if not pharmacy or pharmacy.status != models.PharmacyStatus.Approved:
+                continue
             # calculate distance if lat lng provided
             distance = None
             if lat is not None and lng is not None and pharmacy.lat and pharmacy.lng:

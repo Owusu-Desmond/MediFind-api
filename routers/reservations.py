@@ -49,10 +49,12 @@ def create_reservation(
     db: Session = Depends(deps.get_db),
     current_user: models.User = Depends(deps.get_current_active_user)
 ):
-    # Verify pharmacy exists
+    # Verify pharmacy exists and is active
     pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == res_in.pharmacy_id).first()
     if not pharmacy:
         raise HTTPException(status_code=404, detail=f"Pharmacy {res_in.pharmacy_id} not found")
+    if pharmacy.status != models.PharmacyStatus.Approved:
+        raise HTTPException(status_code=400, detail="This pharmacy is currently suspended and cannot accept reservations.")
 
     # Authoritatively calculate total price & prepare items
     total = 0.0

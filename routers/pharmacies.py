@@ -137,8 +137,11 @@ def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps
     return enrich_pharmacy_response(new_pharmacy)
 
 @router.get("/", response_model=List[schemas.PharmacyResponse])
-def get_pharmacies(skip: int = 0, limit: int = 100, db: Session = Depends(deps.get_db)):
-    pharmacies = db.query(models.Pharmacy).offset(skip).limit(limit).all()
+def get_pharmacies(status: str = None, skip: int = 0, limit: int = 100, db: Session = Depends(deps.get_db)):
+    query = db.query(models.Pharmacy)
+    if status:
+        query = query.filter(models.Pharmacy.status == status)
+    pharmacies = query.offset(skip).limit(limit).all()
     return [enrich_pharmacy_response(p) for p in pharmacies]
 
 @router.get("/nearby", response_model=List[schemas.PharmacyResponse])
