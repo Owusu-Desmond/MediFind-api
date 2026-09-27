@@ -73,7 +73,6 @@ async def get_signed_url(
             signed_path = "/" + signed_path
         full_url = f"{supabase_url}/storage/v1{signed_path}"
 
-    print(f"[Supabase] Generated signed URL: {full_url}")
     return {"signed_url": full_url, "expires_in": 3600}
 
 
