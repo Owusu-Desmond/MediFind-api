@@ -696,7 +696,6 @@ def update_pharmacy_inventory(
             inv.status = "Unavailable"
     if item_in.expiry_date is not None:
         try:
-            from datetime import datetime
             inv.expiry_date = datetime.strptime(str(item_in.expiry_date).split("T")[0], "%Y-%m-%d")
         except Exception:
             pass

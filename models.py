@@ -111,6 +111,13 @@ class PharmacyStaff(Base):
     user = relationship("User")
     pharmacy = relationship("Pharmacy", back_populates="staff")
 
+class AliasType(str, enum.Enum):
+    BRAND = "BRAND"
+    GENERIC = "GENERIC"
+    ABBREVIATION = "ABBREVIATION"
+    COMMON_NAME = "COMMON_NAME"
+    LOCAL_NAME = "LOCAL_NAME"
+
 class Medicine(Base):
     __tablename__ = "medicines"
 
@@ -134,10 +141,26 @@ class Medicine(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    aliases = relationship("MedicineAlias", back_populates="medicine", cascade="all, delete-orphan")
     inventory = relationship("Inventory", back_populates="medicine", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("name", "strength", "dosage_form", "manufacturer", name="uq_medicine_catalogue_entry"),
+    )
+
+class MedicineAlias(Base):
+    __tablename__ = "medicine_aliases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    medicine_id = Column(Integer, ForeignKey("medicines.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias = Column(String(255), nullable=False, index=True)
+    alias_type = Column(String(50), default=AliasType.BRAND.value, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    medicine = relationship("Medicine", back_populates="aliases")
+
+    __table_args__ = (
+        UniqueConstraint("medicine_id", "alias", name="uq_medicine_alias"),
     )
 
 class Inventory(Base):

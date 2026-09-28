@@ -132,6 +132,25 @@ class PharmacyResponse(PharmacyBase):
     class Config:
         from_attributes = True
 
+class MedicineAliasBase(BaseModel):
+    alias: str
+    alias_type: Optional[str] = "BRAND"
+
+class MedicineAliasCreate(MedicineAliasBase):
+    pass
+
+class MedicineAliasUpdate(BaseModel):
+    alias: Optional[str] = None
+    alias_type: Optional[str] = None
+
+class MedicineAliasResponse(MedicineAliasBase):
+    id: int
+    medicine_id: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 class MedicineBase(BaseModel):
     name: str
     generic_name: Optional[str] = None
@@ -151,7 +170,7 @@ class MedicineBase(BaseModel):
     is_active: bool = True
 
 class MedicineCreate(MedicineBase):
-    pass
+    aliases: Optional[List[str]] = None
 
 class MedicineUpdate(BaseModel):
     name: Optional[str] = None
@@ -176,6 +195,8 @@ class MedicineResponse(MedicineBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     active_pharmacies_count: Optional[int] = 0
+    aliases: List[MedicineAliasResponse] = []
+    matched_by: Optional[str] = None
 
     class Config:
         from_attributes = True

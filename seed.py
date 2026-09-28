@@ -85,13 +85,80 @@ for p in pharmacies_data:
         pharmacy_ids.append(data["id"])
 
 # 6. Create medicines
-print("\n5. Creating medicines...")
+print("\n5. Creating central catalogue medicines with aliases...")
 medicines_data = [
-    {"name": "Paracetamol", "generic_name": "Acetaminophen", "dosage": "500mg", "category": "Analgesic", "description": "Common pain reliever and fever reducer.", "manufacturer": "Pharma Ghana Ltd"},
-    {"name": "Amoxicillin", "generic_name": "Amoxicillin", "dosage": "500mg", "category": "Antibiotic", "description": "Broad-spectrum penicillin antibiotic.", "manufacturer": "Medlab West Africa"},
-    {"name": "Metformin", "generic_name": "Metformin HCl", "dosage": "850mg", "category": "Antidiabetic", "description": "First-line medication for type 2 diabetes.", "manufacturer": "AcraPharm Diagnostics"},
-    {"name": "Ibuprofen", "generic_name": "Ibuprofen", "dosage": "400mg", "category": "Analgesic", "description": "NSAID used for pain and swelling relief.", "manufacturer": "Pharma Ghana Ltd"},
-    {"name": "Artemether/Lumefantrine", "generic_name": "Coartem", "dosage": "80/480mg", "category": "Antimalarial", "description": "Combination antimalarial therapy.", "manufacturer": "Novartis GH"},
+    {
+        "name": "Paracetamol",
+        "generic_name": "Acetaminophen",
+        "strength": "500mg",
+        "dosage_form": "Tablet",
+        "route_of_administration": "Oral",
+        "category": "Analgesic & Antipyretic",
+        "description": "First-line pain reliever and fever reducer.",
+        "manufacturer": "Pharma Ghana Ltd",
+        "requires_prescription": False,
+        "aliases": ["Panadol", "PCM", "APAP", "Paracet", "Tylenol"]
+    },
+    {
+        "name": "Paracetamol",
+        "generic_name": "Acetaminophen",
+        "strength": "120mg/5ml",
+        "dosage_form": "Syrup",
+        "route_of_administration": "Oral",
+        "category": "Analgesic & Antipyretic",
+        "description": "Pediatric fever and pain relief liquid suspension.",
+        "manufacturer": "Pharma Ghana Ltd",
+        "requires_prescription": False,
+        "aliases": ["Calpol Infant", "Panadol Baby", "PCM Syrup"]
+    },
+    {
+        "name": "Amoxicillin",
+        "generic_name": "Amoxicillin Trihydrate",
+        "strength": "500mg",
+        "dosage_form": "Capsule",
+        "route_of_administration": "Oral",
+        "category": "Antibacterial",
+        "description": "Broad-spectrum beta-lactam penicillin antibiotic.",
+        "manufacturer": "Medlab West Africa",
+        "requires_prescription": True,
+        "aliases": ["Amoxil", "Moxatag", "Amox"]
+    },
+    {
+        "name": "Ciprofloxacin",
+        "generic_name": "Ciprofloxacin Hydrochloride",
+        "strength": "500mg",
+        "dosage_form": "Tablet",
+        "route_of_administration": "Oral",
+        "category": "Antibacterial",
+        "description": "Fluoroquinolone antibiotic for bacterial infections.",
+        "manufacturer": "Ghana National Pharma",
+        "requires_prescription": True,
+        "aliases": ["Cipro", "Ciproxin", "Ciprolet"]
+    },
+    {
+        "name": "Artemether / Lumefantrine",
+        "generic_name": "Artemether + Lumefantrine",
+        "strength": "80/480mg",
+        "dosage_form": "Tablet",
+        "route_of_administration": "Oral",
+        "category": "Antimalarial",
+        "description": "Artemisinin-based combination therapy (ACT) for acute uncomplicated malaria.",
+        "manufacturer": "Novartis GH",
+        "requires_prescription": True,
+        "aliases": ["Coartem", "Lonart", "Riamet", "Artefan"]
+    },
+    {
+        "name": "Ibuprofen",
+        "generic_name": "Ibuprofen",
+        "strength": "400mg",
+        "dosage_form": "Tablet",
+        "route_of_administration": "Oral",
+        "category": "NSAID",
+        "description": "Non-steroidal anti-inflammatory drug for pain, fever, and inflammation.",
+        "manufacturer": "Pharma Ghana Ltd",
+        "requires_prescription": False,
+        "aliases": ["Advil", "Motrin", "Nurofen"]
+    }
 ]
 
 medicine_ids = []
@@ -99,11 +166,9 @@ for m in medicines_data:
     res = requests.post(f"{BASE}/api/medicines/", json=m, headers=admin_headers)
     data = res.json()
     print(f"   -> {res.status_code}: {data.get('name', data)}")
-    if res.status_code == 200:
+    if res.status_code in (200, 201):
         medicine_ids.append(data["id"])
 
 print("\n=== Seed complete! ===")
 print(f"Pharmacy IDs: {pharmacy_ids}")
 print(f"Medicine IDs: {medicine_ids}")
-print(f"\nNote: You must manually update the 'admin@medifind.com' user role to 'Admin' in the DB,")
-print(f"and create inventory entries linking pharmacies and medicines.")

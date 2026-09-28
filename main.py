@@ -57,6 +57,43 @@ try:
             END $$;
         """))
         
+        # Ensure PostgreSQL pg_trgm extension is active for typo-tolerant fuzzy searching
+        try:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
+        except Exception as ext_err:
+            print(f"[startup] Notice: pg_trgm extension could not be initialized directly ({ext_err})")
+
+        # Medicine Aliases table & indexes
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS medicine_aliases (
+                id SERIAL PRIMARY KEY,
+                medicine_id INTEGER NOT NULL REFERENCES medicines(id) ON DELETE CASCADE,
+                alias VARCHAR(255) NOT NULL,
+                alias_type VARCHAR(50) DEFAULT 'BRAND',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_medicine_aliases_medicine_id ON medicine_aliases(medicine_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_medicine_aliases_alias ON medicine_aliases(alias);"))
+        
+        # Ensure unique constraint on (medicine_id, lower(alias))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_medicine_alias') THEN
+                    ALTER TABLE medicine_aliases ADD CONSTRAINT uq_medicine_alias UNIQUE (medicine_id, alias);
+                END IF;
+            END $$;
+        """))
+
+        # GIN Trigram Indexes for high-performance sub-string and fuzzy matching
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS trgm_idx_medicines_name ON medicines USING gin (name gin_trgm_ops);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS trgm_idx_medicines_generic_name ON medicines USING gin (generic_name gin_trgm_ops);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS trgm_idx_medicine_aliases_alias ON medicine_aliases USING gin (alias gin_trgm_ops);"))
+        except Exception as trgm_idx_err:
+            print(f"[startup] Notice: GIN trigram index creation skipped ({trgm_idx_err})")
+
         # Pharmacy Payout & Paystack columns
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_code VARCHAR;"))
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_id VARCHAR;"))
