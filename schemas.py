@@ -135,6 +135,30 @@ class PharmacyResponse(PharmacyBase):
 class MedicineBase(BaseModel):
     name: str
     generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = "Tablet"
+    route_of_administration: Optional[str] = "Oral"
+    dosage: Optional[str] = None # Kept for backward compatibility
+    dosage_instructions: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    manufacturer: Optional[str] = None
+    precautions: Optional[str] = None
+    side_effects: Optional[str] = None
+    tags: Optional[str] = None
+    image_url: Optional[str] = None
+    requires_prescription: bool = False
+    is_active: bool = True
+
+class MedicineCreate(MedicineBase):
+    pass
+
+class MedicineUpdate(BaseModel):
+    name: Optional[str] = None
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = None
+    route_of_administration: Optional[str] = None
     dosage: Optional[str] = None
     dosage_instructions: Optional[str] = None
     category: Optional[str] = None
@@ -144,38 +168,93 @@ class MedicineBase(BaseModel):
     side_effects: Optional[str] = None
     tags: Optional[str] = None
     image_url: Optional[str] = None
-
-class MedicineCreate(MedicineBase):
-    pass
+    requires_prescription: Optional[bool] = None
+    is_active: Optional[bool] = None
 
 class MedicineResponse(MedicineBase):
     id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    active_pharmacies_count: Optional[int] = 0
 
     class Config:
         from_attributes = True
+
+class MedicineCataloguePagination(BaseModel):
+    items: List[MedicineResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
 
 class InventoryBase(BaseModel):
     pharmacy_id: int
     medicine_id: int
     batch_number: Optional[str] = None
-    stock_quantity: int
-    price: float
+    stock_quantity: int = 0
+    price: float = 0.0
     expiry_date: Optional[datetime] = None
+    is_available: bool = True
 
 class InventoryCreate(InventoryBase):
     pass
+
+class InventoryAddFromCatalogue(BaseModel):
+    medicine_id: int
+    price: float = 15.0
+    stock_quantity: int = 50
+    batch_number: Optional[str] = None
+    expiry_date: Optional[str] = None
+    is_available: bool = True
+
+class BulkInventoryItem(BaseModel):
+    medicine_id: int
+    price: Optional[float] = None
+    stock_quantity: Optional[int] = None
+    batch_number: Optional[str] = None
+    expiry_date: Optional[str] = None
+    is_available: Optional[bool] = True
+
+class BulkInventoryAddRequest(BaseModel):
+    medicine_ids: Optional[List[int]] = None
+    items: Optional[List[BulkInventoryItem]] = None
+    default_price: Optional[float] = 15.0
+    default_quantity: Optional[int] = 50
+
+class BulkInventoryAddResponse(BaseModel):
+    added_count: int
+    skipped_count: int
+    invalid_ids: List[int] = []
+    existing_ids: List[int] = []
+    added_items: List["InventoryResponse"] = []
+    message: str
 
 class InventoryResponse(InventoryBase):
     id: int
     status: str
     medicine: MedicineResponse
-    pharmacy: PharmacyResponse
+    pharmacy: Optional[PharmacyResponse] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
+class InventoryUpdate(BaseModel):
+    price: Optional[float] = None
+    stock_quantity: Optional[int] = None
+    batch_number: Optional[str] = None
+    expiry_date: Optional[str] = None
+    is_available: Optional[bool] = None
+    status: Optional[str] = None
+
+# Backward compatibility schemas for legacy inventory requests
 class InventoryMedicineCreate(BaseModel):
     name: str
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = "Tablet"
+    route_of_administration: Optional[str] = "Oral"
     dosage: Optional[str] = None
     dosage_instructions: Optional[str] = None
     category: Optional[str] = None
@@ -185,13 +264,19 @@ class InventoryMedicineCreate(BaseModel):
     side_effects: Optional[str] = None
     tags: Optional[str] = None
     image_url: Optional[str] = None
+    requires_prescription: bool = False
     batch_number: Optional[str] = None
     stock_quantity: int = 0
     price: float = 0.0
     expiry_date: Optional[str] = None
+    is_available: bool = True
 
 class InventoryMedicineUpdate(BaseModel):
     name: Optional[str] = None
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = None
+    route_of_administration: Optional[str] = None
     dosage: Optional[str] = None
     dosage_instructions: Optional[str] = None
     category: Optional[str] = None
@@ -201,10 +286,12 @@ class InventoryMedicineUpdate(BaseModel):
     side_effects: Optional[str] = None
     tags: Optional[str] = None
     image_url: Optional[str] = None
+    requires_prescription: Optional[bool] = None
     batch_number: Optional[str] = None
     stock_quantity: Optional[int] = None
     price: Optional[float] = None
     expiry_date: Optional[str] = None
+    is_available: Optional[bool] = None
 
 class ReservationItemBase(BaseModel):
     medicine_id: int

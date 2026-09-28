@@ -1,11 +1,12 @@
 import os
 import uuid
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
-from typing import List
-import models, schemas, deps, auth, storage, paystack_service
 import math
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, and_, func
+import models, schemas, deps, auth, storage, paystack_service
 from utils import calculate_pharmacy_open_status, send_approval_email, generate_secure_password
 
 router = APIRouter(
@@ -300,13 +301,248 @@ def get_my_pharmacy(
     return enrich_pharmacy_response(default_pharmacy)
 
 
+def verify_pharmacy_access(pharmacy_id: int, user: models.User, db: Session):
+    if user.role == models.UserRole.Admin:
+        return True
+    if user.role == models.UserRole.Pharmacist:
+        staff = db.query(models.PharmacyStaff).filter(
+            models.PharmacyStaff.user_id == user.id,
+            models.PharmacyStaff.pharmacy_id == pharmacy_id
+        ).first()
+        if staff:
+            return True
+        pharma = db.query(models.Pharmacy).filter(
+            models.Pharmacy.id == pharmacy_id,
+            models.Pharmacy.email == user.email
+        ).first()
+        if pharma:
+            return True
+    raise HTTPException(status_code=403, detail="You are not authorized to manage inventory for this pharmacy")
+
+
 @router.get("/{pharmacy_id}/inventory", response_model=List[schemas.InventoryResponse])
 def get_pharmacy_inventory(
     pharmacy_id: int,
+    q: Optional[str] = None,
+    is_available: Optional[bool] = None,
+    status: Optional[str] = None,
     db: Session = Depends(deps.get_db),
     current_user: models.User = Depends(deps.get_current_active_user)
 ):
-    return db.query(models.Inventory).filter(models.Inventory.pharmacy_id == pharmacy_id).all()
+    """List all inventory items stocked by a specific pharmacy."""
+    query = db.query(models.Inventory).options(
+        joinedload(models.Inventory.medicine)
+    ).join(models.Medicine).filter(models.Inventory.pharmacy_id == pharmacy_id)
+
+    if is_available is not None:
+        query = query.filter(models.Inventory.is_available == is_available)
+        
+    if status and status != "All":
+        query = query.filter(models.Inventory.status == status)
+
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                models.Medicine.name.ilike(term),
+                models.Medicine.generic_name.ilike(term),
+                models.Medicine.strength.ilike(term),
+                models.Medicine.dosage.ilike(term),
+                models.Medicine.category.ilike(term),
+                models.Medicine.manufacturer.ilike(term),
+                models.Inventory.batch_number.ilike(term)
+            )
+        )
+
+    return query.order_by(models.Medicine.name.asc()).all()
+
+
+@router.post("/{pharmacy_id}/inventory/add-from-catalogue", response_model=schemas.InventoryResponse)
+def add_inventory_from_catalogue(
+    pharmacy_id: int,
+    item_in: schemas.InventoryAddFromCatalogue,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    """
+    Add a medicine from the Central Medicine Catalogue to the pharmacy's inventory.
+    Enforces non-negative price/stock validation and prevents duplicate inventory entries.
+    """
+    verify_pharmacy_access(pharmacy_id, current_user, db)
+
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+    if pharmacy.status != models.PharmacyStatus.Approved and current_user.role != models.UserRole.Admin:
+        raise HTTPException(status_code=400, detail="Pharmacy is pending approval or suspended")
+
+    if item_in.price < 0:
+        raise HTTPException(status_code=400, detail="Selling price cannot be negative")
+    if item_in.stock_quantity < 0:
+        raise HTTPException(status_code=400, detail="Stock quantity cannot be negative")
+
+    # Verify medicine exists in central catalogue
+    medicine = db.query(models.Medicine).filter(models.Medicine.id == item_in.medicine_id).first()
+    if not medicine:
+        raise HTTPException(status_code=404, detail="Catalogue medicine not found")
+    if not medicine.is_active:
+        raise HTTPException(status_code=400, detail="This catalogue medicine is currently inactive")
+
+    # Check for duplicate
+    existing = db.query(models.Inventory).filter(
+        models.Inventory.pharmacy_id == pharmacy_id,
+        models.Inventory.medicine_id == item_in.medicine_id
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{medicine.name}' is already in your inventory (Inventory ID: {existing.id}). Please update its stock or price instead."
+        )
+
+    status_str = "In Stock"
+    if item_in.stock_quantity <= 0:
+        status_str = "Out of Stock"
+    elif item_in.stock_quantity <= 20:
+        status_str = "Low Stock"
+    if not item_in.is_available:
+        status_str = "Unavailable"
+
+    expiry_dt = None
+    if item_in.expiry_date:
+        try:
+            from datetime import datetime
+            expiry_dt = datetime.strptime(item_in.expiry_date.split("T")[0], "%Y-%m-%d")
+        except Exception:
+            pass
+
+    new_inventory = models.Inventory(
+        pharmacy_id=pharmacy_id,
+        medicine_id=medicine.id,
+        batch_number=item_in.batch_number,
+        stock_quantity=item_in.stock_quantity,
+        price=float(item_in.price),
+        expiry_date=expiry_dt,
+        is_available=item_in.is_available,
+        status=status_str
+    )
+    db.add(new_inventory)
+    db.commit()
+    db.refresh(new_inventory)
+    return new_inventory
+
+
+@router.post("/{pharmacy_id}/inventory/bulk-add", response_model=schemas.BulkInventoryAddResponse)
+def bulk_add_inventory_from_catalogue(
+    pharmacy_id: int,
+    bulk_in: schemas.BulkInventoryAddRequest,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user)
+):
+    """
+    Bulk Add Feature: Add multiple medicines from the Central Catalogue to a pharmacy's inventory in one operation.
+    Skips duplicates without failing the entire batch, and returns a detailed summary report.
+    """
+    verify_pharmacy_access(pharmacy_id, current_user, db)
+
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(status_code=404, detail="Pharmacy not found")
+    if pharmacy.status != models.PharmacyStatus.Approved and current_user.role != models.UserRole.Admin:
+        raise HTTPException(status_code=400, detail="Pharmacy is pending approval or suspended")
+
+    # Assemble list of items to process
+    items_to_process: List[Dict[str, Any]] = []
+    if bulk_in.items and len(bulk_in.items) > 0:
+        for it in bulk_in.items:
+            items_to_process.append({
+                "medicine_id": it.medicine_id,
+                "price": it.price if it.price is not None else bulk_in.default_price,
+                "stock_quantity": it.stock_quantity if it.stock_quantity is not None else bulk_in.default_quantity,
+                "batch_number": it.batch_number,
+                "expiry_date": it.expiry_date,
+                "is_available": it.is_available if it.is_available is not None else True
+            })
+    elif bulk_in.medicine_ids and len(bulk_in.medicine_ids) > 0:
+        for mid in bulk_in.medicine_ids:
+            items_to_process.append({
+                "medicine_id": mid,
+                "price": bulk_in.default_price or 15.0,
+                "stock_quantity": bulk_in.default_quantity or 50,
+                "batch_number": None,
+                "expiry_date": None,
+                "is_available": True
+            })
+    else:
+        raise HTTPException(status_code=400, detail="Please provide a list of medicine IDs to add")
+
+    added_items = []
+    existing_ids = []
+    invalid_ids = []
+
+    # Query all existing inventory for this pharmacy to quickly check duplicates
+    existing_med_ids = set([
+        row[0] for row in db.query(models.Inventory.medicine_id).filter(
+            models.Inventory.pharmacy_id == pharmacy_id
+        ).all()
+    ])
+
+    for item in items_to_process:
+        med_id = item["medicine_id"]
+
+        if med_id in existing_med_ids:
+            existing_ids.append(med_id)
+            continue
+
+        med = db.query(models.Medicine).filter(models.Medicine.id == med_id).first()
+        if not med or not med.is_active:
+            invalid_ids.append(med_id)
+            continue
+
+        price = max(0.0, float(item["price"] or 15.0))
+        qty = max(0, int(item["stock_quantity"] or 0))
+
+        status_str = "In Stock"
+        if qty <= 0:
+            status_str = "Out of Stock"
+        elif qty <= 20:
+            status_str = "Low Stock"
+        if not item["is_available"]:
+            status_str = "Unavailable"
+
+        expiry_dt = None
+        if item.get("expiry_date"):
+            try:
+                from datetime import datetime
+                expiry_dt = datetime.strptime(str(item["expiry_date"]).split("T")[0], "%Y-%m-%d")
+            except Exception:
+                pass
+
+        new_inv = models.Inventory(
+            pharmacy_id=pharmacy_id,
+            medicine_id=med.id,
+            batch_number=item.get("batch_number"),
+            stock_quantity=qty,
+            price=price,
+            expiry_date=expiry_dt,
+            is_available=item.get("is_available", True),
+            status=status_str
+        )
+        db.add(new_inv)
+        existing_med_ids.add(med.id)
+        added_items.append(new_inv)
+
+    db.commit()
+    for it in added_items:
+        db.refresh(it)
+
+    return schemas.BulkInventoryAddResponse(
+        added_count=len(added_items),
+        skipped_count=len(existing_ids) + len(invalid_ids),
+        invalid_ids=invalid_ids,
+        existing_ids=existing_ids,
+        added_items=added_items,
+        message=f"Successfully added {len(added_items)} medicines to inventory. ({len(existing_ids)} already existed, {len(invalid_ids)} invalid/inactive)."
+    )
 
 
 @router.post("/{pharmacy_id}/inventory", response_model=schemas.InventoryResponse)
@@ -316,55 +552,88 @@ def add_pharmacy_inventory(
     db: Session = Depends(deps.get_db),
     current_user: models.User = Depends(deps.get_current_active_user)
 ):
+    """
+    Add a medicine to pharmacy inventory.
+    If the medicine already exists in the central catalogue, connects to it.
+    If not, creates a new catalogue entry and connects it.
+    """
+    verify_pharmacy_access(pharmacy_id, current_user, db)
+
     pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
     if not pharmacy:
         raise HTTPException(status_code=404, detail="Pharmacy not found")
 
-    medicine = db.query(models.Medicine).filter(models.Medicine.name == item_in.name, models.Medicine.dosage == item_in.dosage).first()
+    if item_in.price < 0:
+        raise HTTPException(status_code=400, detail="Price cannot be negative")
+    if item_in.stock_quantity < 0:
+        raise HTTPException(status_code=400, detail="Stock quantity cannot be negative")
+
+    # Match or create in central catalogue
+    strength_val = item_in.strength or item_in.dosage or "500mg"
+    medicine = db.query(models.Medicine).filter(
+        func.lower(models.Medicine.name) == item_in.name.strip().lower(),
+        func.lower(func.coalesce(models.Medicine.strength, models.Medicine.dosage, '')) == strength_val.strip().lower()
+    ).first()
+
     if not medicine:
         medicine = models.Medicine(
-            name=item_in.name,
-            dosage=item_in.dosage,
+            name=item_in.name.strip(),
+            generic_name=item_in.generic_name,
+            strength=strength_val,
+            dosage=strength_val,
+            dosage_form=item_in.dosage_form or "Tablet",
+            route_of_administration=item_in.route_of_administration or "Oral",
             dosage_instructions=item_in.dosage_instructions,
-            category=item_in.category,
+            category=item_in.category or "General",
             description=item_in.description,
             manufacturer=item_in.manufacturer,
             precautions=item_in.precautions,
             side_effects=item_in.side_effects,
             tags=item_in.tags,
-            image_url=item_in.image_url
+            image_url=item_in.image_url,
+            requires_prescription=item_in.requires_prescription,
+            is_active=True
         )
         db.add(medicine)
         db.commit()
         db.refresh(medicine)
-    else:
-        # Update existing medicine attributes if provided
-        if item_in.dosage_instructions:
-            medicine.dosage_instructions = item_in.dosage_instructions
-        if item_in.description:
-            medicine.description = item_in.description
-        if item_in.precautions:
-            medicine.precautions = item_in.precautions
-        if item_in.side_effects:
-            medicine.side_effects = item_in.side_effects
-        if item_in.tags:
-            medicine.tags = item_in.tags
-        if item_in.manufacturer:
-            medicine.manufacturer = item_in.manufacturer
-        if item_in.image_url:
-            medicine.image_url = item_in.image_url
+
+    # Check if this pharmacy already has this medicine in inventory
+    existing_inv = db.query(models.Inventory).filter(
+        models.Inventory.pharmacy_id == pharmacy_id,
+        models.Inventory.medicine_id == medicine.id
+    ).first()
+    if existing_inv:
+        # Update existing inventory rather than creating a duplicate
+        existing_inv.stock_quantity = item_in.stock_quantity
+        existing_inv.price = float(item_in.price)
+        if item_in.batch_number:
+            existing_inv.batch_number = item_in.batch_number
+        if item_in.stock_quantity <= 0:
+            existing_inv.status = "Out of Stock"
+        elif item_in.stock_quantity <= 20:
+            existing_inv.status = "Low Stock"
+        else:
+            existing_inv.status = "In Stock"
+        existing_inv.is_available = item_in.is_available
+        existing_inv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(existing_inv)
+        return existing_inv
 
     status_str = "In Stock"
     if item_in.stock_quantity <= 0:
         status_str = "Out of Stock"
     elif item_in.stock_quantity <= 20:
         status_str = "Low Stock"
+    if not item_in.is_available:
+        status_str = "Unavailable"
 
     expiry_dt = None
     if item_in.expiry_date:
         try:
             from datetime import datetime
-            expiry_dt = datetime.strptime(item_in.expiry_date, "%Y-%m-%d")
+            expiry_dt = datetime.strptime(str(item_in.expiry_date).split("T")[0], "%Y-%m-%d")
         except Exception:
             pass
 
@@ -373,8 +642,9 @@ def add_pharmacy_inventory(
         medicine_id=medicine.id,
         batch_number=item_in.batch_number,
         stock_quantity=item_in.stock_quantity,
-        price=item_in.price,
+        price=float(item_in.price),
         expiry_date=expiry_dt,
+        is_available=item_in.is_available,
         status=status_str
     )
     db.add(new_inventory)
@@ -391,13 +661,24 @@ def update_pharmacy_inventory(
     db: Session = Depends(deps.get_db),
     current_user: models.User = Depends(deps.get_current_active_user)
 ):
-    inv = db.query(models.Inventory).filter(models.Inventory.id == inventory_id, models.Inventory.pharmacy_id == pharmacy_id).first()
+    """
+    Update a pharmacy's inventory pricing, quantity, batch, or availability.
+    Crucially, changes to a pharmacy's inventory record DO NOT alter the central catalogue attributes.
+    """
+    verify_pharmacy_access(pharmacy_id, current_user, db)
+
+    inv = db.query(models.Inventory).filter(
+        models.Inventory.id == inventory_id,
+        models.Inventory.pharmacy_id == pharmacy_id
+    ).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     if item_in.batch_number is not None:
         inv.batch_number = item_in.batch_number
     if item_in.stock_quantity is not None:
+        if item_in.stock_quantity < 0:
+            raise HTTPException(status_code=400, detail="Stock quantity cannot be negative")
         inv.stock_quantity = item_in.stock_quantity
         if inv.stock_quantity <= 0:
             inv.status = "Out of Stock"
@@ -406,42 +687,24 @@ def update_pharmacy_inventory(
         else:
             inv.status = "In Stock"
     if item_in.price is not None:
-        inv.price = item_in.price
+        if item_in.price < 0:
+            raise HTTPException(status_code=400, detail="Selling price cannot be negative")
+        inv.price = float(item_in.price)
+    if item_in.is_available is not None:
+        inv.is_available = item_in.is_available
+        if not inv.is_available:
+            inv.status = "Unavailable"
     if item_in.expiry_date is not None:
         try:
             from datetime import datetime
-            inv.expiry_date = datetime.strptime(item_in.expiry_date, "%Y-%m-%d")
+            inv.expiry_date = datetime.strptime(str(item_in.expiry_date).split("T")[0], "%Y-%m-%d")
         except Exception:
             pass
 
-    med = inv.medicine
-    if med:
-        if item_in.name is not None:
-            med.name = item_in.name
-        if item_in.dosage is not None:
-            med.dosage = item_in.dosage
-        if item_in.dosage_instructions is not None:
-            med.dosage_instructions = item_in.dosage_instructions
-        if item_in.category is not None:
-            med.category = item_in.category
-        if item_in.description is not None:
-            med.description = item_in.description
-        if item_in.manufacturer is not None:
-            med.manufacturer = item_in.manufacturer
-        if item_in.precautions is not None:
-            med.precautions = item_in.precautions
-        if item_in.side_effects is not None:
-            med.side_effects = item_in.side_effects
-        if item_in.tags is not None:
-            med.tags = item_in.tags
-        if item_in.image_url is not None:
-            med.image_url = item_in.image_url
-
+    inv.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(inv)
     return inv
-
-
 
 
 @router.delete("/{pharmacy_id}/inventory/{inventory_id}")
@@ -451,13 +714,21 @@ def delete_pharmacy_inventory(
     db: Session = Depends(deps.get_db),
     current_user: models.User = Depends(deps.get_current_active_user)
 ):
-    inv = db.query(models.Inventory).filter(models.Inventory.id == inventory_id, models.Inventory.pharmacy_id == pharmacy_id).first()
+    """
+    Remove a medicine from a pharmacy's inventory without deleting the Central Catalogue entry.
+    """
+    verify_pharmacy_access(pharmacy_id, current_user, db)
+
+    inv = db.query(models.Inventory).filter(
+        models.Inventory.id == inventory_id,
+        models.Inventory.pharmacy_id == pharmacy_id
+    ).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     db.delete(inv)
     db.commit()
-    return {"message": "Inventory item deleted"}
+    return {"message": "Inventory item successfully removed from pharmacy stock"}
 
 
 @router.get("/{pharmacy_id}/staff", response_model=List[schemas.StaffResponse])

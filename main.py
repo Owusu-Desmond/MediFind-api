@@ -20,6 +20,43 @@ try:
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_instructions TEXT;"))
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS gps_address VARCHAR;"))
         
+        # Central Medicine Catalogue columns & backfills
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS strength VARCHAR;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_form VARCHAR;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS route_of_administration VARCHAR;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS requires_prescription BOOLEAN DEFAULT FALSE;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
+        conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("UPDATE medicines SET strength = dosage WHERE strength IS NULL AND dosage IS NOT NULL;"))
+        conn.execute(text("UPDATE medicines SET is_active = TRUE WHERE is_active IS NULL;"))
+        conn.execute(text("UPDATE medicines SET requires_prescription = FALSE WHERE requires_prescription IS NULL;"))
+        conn.execute(text("UPDATE medicines SET dosage_form = 'Tablet' WHERE dosage_form IS NULL;"))
+        conn.execute(text("UPDATE medicines SET route_of_administration = 'Oral' WHERE route_of_administration IS NULL;"))
+        
+        # Pharmacy Inventory columns & unique constraint
+        conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS is_available BOOLEAN DEFAULT TRUE;"))
+        conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
+        conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;"))
+        conn.execute(text("UPDATE inventory SET is_available = TRUE WHERE is_available IS NULL;"))
+        
+        # Remove duplicate inventory entries if any exist, keeping highest stock/latest
+        conn.execute(text("""
+            DELETE FROM inventory a USING inventory b
+            WHERE a.id < b.id
+              AND a.pharmacy_id = b.pharmacy_id
+              AND a.medicine_id = b.medicine_id;
+        """))
+        
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_pharmacy_medicine') THEN
+                    ALTER TABLE inventory ADD CONSTRAINT uq_pharmacy_medicine UNIQUE (pharmacy_id, medicine_id);
+                END IF;
+            END $$;
+        """))
+        
         # Pharmacy Payout & Paystack columns
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_code VARCHAR;"))
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS paystack_subaccount_id VARCHAR;"))

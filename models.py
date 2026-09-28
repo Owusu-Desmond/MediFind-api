@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Text, Enum
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Text, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -115,9 +115,12 @@ class Medicine(Base):
     __tablename__ = "medicines"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True, nullable=False)
-    generic_name = Column(String, nullable=True)
-    dosage = Column(String, nullable=True)
+    name = Column(String, index=True, nullable=False) # Brand / Trade Name
+    generic_name = Column(String, index=True, nullable=True) # INN / Generic Name
+    strength = Column(String, nullable=True) # e.g. "500mg", "100mg/5ml", "80/480mg"
+    dosage_form = Column(String, index=True, nullable=True) # e.g. "Tablet", "Capsule", "Syrup", "Suspension", "Injection", "Inhaler", "Ointment", "Drops"
+    route_of_administration = Column(String, nullable=True) # e.g. "Oral", "Intravenous", "Topical", "Inhalation", "Ophthalmic"
+    dosage = Column(String, nullable=True) # Kept for backward compatibility
     dosage_instructions = Column(Text, nullable=True)
     category = Column(String, index=True, nullable=True)
     description = Column(Text, nullable=True)
@@ -126,23 +129,38 @@ class Medicine(Base):
     side_effects = Column(Text, nullable=True)
     tags = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+    requires_prescription = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    inventory = relationship("Inventory", back_populates="medicine")
+    inventory = relationship("Inventory", back_populates="medicine", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("name", "strength", "dosage_form", "manufacturer", name="uq_medicine_catalogue_entry"),
+    )
 
 class Inventory(Base):
     __tablename__ = "inventory"
 
     id = Column(Integer, primary_key=True, index=True)
-    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
-    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False, index=True)
+    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False, index=True)
     batch_number = Column(String, nullable=True)
     stock_quantity = Column(Integer, default=0, nullable=False)
     price = Column(Float, nullable=False)
     expiry_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String, default="In Stock")
+    is_available = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     pharmacy = relationship("Pharmacy", back_populates="inventory")
     medicine = relationship("Medicine", back_populates="inventory")
+
+    __table_args__ = (
+        UniqueConstraint("pharmacy_id", "medicine_id", name="uq_pharmacy_medicine"),
+    )
 
 class Reservation(Base):
     __tablename__ = "reservations"
