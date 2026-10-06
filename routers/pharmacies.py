@@ -123,6 +123,38 @@ async def upload_medicine_image(
     return {"url": file_url, "filename": file.filename}
 
 
+@router.post("/upload-pharmacy-image")
+async def upload_pharmacy_image(
+    file: UploadFile = File(...),
+):
+    ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type '{ext}'. Allowed: PNG, JPG, JPEG, WEBP")
+
+    contents = await file.read()
+    try:
+        file_url = await storage.upload_file_to_supabase(
+            file_bytes=contents,
+            filename=file.filename,
+            content_type=file.content_type or "image/jpeg",
+            bucket_name="pharmacies"
+        )
+    except Exception as e:
+        # Fallback to medicines bucket if pharmacies bucket is not yet configured in Supabase
+        try:
+            file_url = await storage.upload_file_to_supabase(
+                file_bytes=contents,
+                filename=file.filename,
+                content_type=file.content_type or "image/jpeg",
+                bucket_name="medicines"
+            )
+        except Exception as e2:
+            raise HTTPException(status_code=502, detail=f"Failed to upload pharmacy image to Supabase: {e2}")
+
+    return {"url": file_url, "filename": file.filename}
+
+
 @router.post("/", response_model=schemas.PharmacyResponse)
 def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps.get_db)):
     # Simple check: maybe only allow creation if it doesn't exist

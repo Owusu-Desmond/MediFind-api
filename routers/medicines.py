@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func, text
 from typing import List, Optional, Dict, Any, Tuple
@@ -49,8 +49,9 @@ def resolve_canonical_medicines(
     dosage_form: Optional[str] = None,
     requires_prescription: Optional[bool] = None,
     is_active: Optional[bool] = True,
-    limit: int = 100
-) -> List[Tuple[models.Medicine, str, float]]:
+    skip: int = 0,
+    limit: int = 25
+) -> Tuple[List[Tuple[models.Medicine, str, float]], int]:
     """
     5-Tier Intelligent Canonical Medicine Resolution:
     1. Exact Name match (Score: 100)
@@ -59,7 +60,7 @@ def resolve_canonical_medicines(
     4. Partial / Substring match (Score: 60)
     5. Typo-Tolerant Fuzzy match (Score: 40)
     
-    Returns a deduplicated list of (Medicine, matched_by, score) tuples ranked highest-score first.
+    Returns (ranked_matches_slice, total_count)
     """
     base_query = db.query(models.Medicine).options(joinedload(models.Medicine.aliases))
     if is_active is not None:
@@ -72,8 +73,9 @@ def resolve_canonical_medicines(
         base_query = base_query.filter(models.Medicine.requires_prescription == requires_prescription)
 
     if not query_str or not query_str.strip():
-        all_meds = base_query.order_by(models.Medicine.name.asc()).limit(limit).all()
-        return [(m, "all", 100.0) for m in all_meds]
+        total_count = base_query.count()
+        paged_meds = base_query.order_by(models.Medicine.name.asc()).offset(skip).limit(limit).all()
+        return [(m, "all", 100.0) for m in paged_meds], total_count
 
     q_clean = query_str.strip().lower()
 
@@ -143,7 +145,8 @@ def resolve_canonical_medicines(
             consider_match(m, "fuzzy", fuzzy_score)
 
     sorted_results = sorted(ranked_matches.values(), key=lambda x: (-x[2], x[0].name))
-    return sorted_results[:limit]
+    total_count = len(sorted_results)
+    return sorted_results[skip:skip + limit], total_count
 
 
 @router.get("/categories", response_model=List[str])
@@ -168,40 +171,70 @@ def get_medicine_dosage_forms(db: Session = Depends(deps.get_db)):
 
 @router.get("/", response_model=List[schemas.MedicineResponse])
 def get_medicines(
+    response: Response,
     q: Optional[str] = None,
     category: Optional[str] = None,
     dosage_form: Optional[str] = None,
     requires_prescription: Optional[bool] = None,
     is_active: Optional[bool] = True,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     skip: int = 0,
-    limit: int = 100,
+    limit: Optional[int] = None,
     db: Session = Depends(deps.get_db)
 ):
     """
-    Browse the Central Medicine Catalogue with intelligent canonical search and alias resolution.
+    Browse the Central Medicine Catalogue with intelligent canonical search, alias resolution,
+    and fast pagination. Supports both page/page_size and skip/limit query parameters.
+    Returns pagination headers: X-Total-Count, X-Page, X-Page-Size, X-Total-Pages.
     """
-    resolved = resolve_canonical_medicines(
+    if page is not None and page > 0:
+        actual_limit = page_size if page_size and page_size > 0 else 25
+        actual_skip = (page - 1) * actual_limit
+        current_page = page
+    else:
+        actual_limit = limit if limit is not None and limit > 0 else (page_size if page_size and page_size > 0 else 25)
+        actual_skip = skip if skip >= 0 else 0
+        current_page = (actual_skip // actual_limit) + 1 if actual_limit > 0 else 1
+
+    sliced, total_count = resolve_canonical_medicines(
         db=db,
         query_str=q,
         category=category,
         dosage_form=dosage_form,
         requires_prescription=requires_prescription,
         is_active=is_active,
-        limit=limit + skip
+        skip=actual_skip,
+        limit=actual_limit
     )
     
-    sliced = resolved[skip:skip + limit]
-    results = []
-    for med, matched_by, score in sliced:
-        active_count = db.query(models.Inventory).join(models.Pharmacy).filter(
-            models.Inventory.medicine_id == med.id,
+    med_ids = [med.id for med, _, _ in sliced]
+    count_map = {}
+    if med_ids:
+        counts = db.query(
+            models.Inventory.medicine_id,
+            func.count(models.Inventory.id)
+        ).join(models.Pharmacy).filter(
+            models.Inventory.medicine_id.in_(med_ids),
             models.Inventory.is_available == True,
             models.Inventory.stock_quantity > 0,
             models.Pharmacy.status == models.PharmacyStatus.Approved
-        ).count()
-        med.active_pharmacies_count = active_count
+        ).group_by(models.Inventory.medicine_id).all()
+        count_map = {row[0]: row[1] for row in counts}
+
+    results = []
+    for med, matched_by, score in sliced:
+        med.active_pharmacies_count = count_map.get(med.id, 0)
         med.matched_by = matched_by
         results.append(med)
+
+    total_pages = max(1, math.ceil(total_count / actual_limit)) if actual_limit > 0 else 1
+
+    response.headers["X-Total-Count"] = str(total_count)
+    response.headers["X-Page"] = str(current_page)
+    response.headers["X-Page-Size"] = str(actual_limit)
+    response.headers["X-Total-Pages"] = str(total_pages)
+    response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Page, X-Page-Size, X-Total-Pages"
         
     return results
 
@@ -220,12 +253,13 @@ def search_medicines(
     Returns approved pharmacies stocking the medicine with prices, availability, and distances.
     """
     # 1. Resolve canonical medicine matches
-    resolved_meds = resolve_canonical_medicines(
+    resolved_meds, _ = resolve_canonical_medicines(
         db=db,
         query_str=q,
         category=category,
         dosage_form=dosage_form,
         is_active=True,
+        skip=0,
         limit=50
     )
 
@@ -279,6 +313,8 @@ def search_medicines(
             "lat": pharma.lat,
             "lng": pharma.lng,
             "verified": pharma.verified,
+            "image_url": pharma.image_url,
+            "logo_url": pharma.logo_url,
         }
 
         # Format medicine with matched_by annotation

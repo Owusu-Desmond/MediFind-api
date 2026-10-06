@@ -19,6 +19,8 @@ try:
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS image_url VARCHAR;"))
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS dosage_instructions TEXT;"))
         conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS gps_address VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS image_url VARCHAR;"))
+        conn.execute(text("ALTER TABLE pharmacies ADD COLUMN IF NOT EXISTS logo_url VARCHAR;"))
         
         # Central Medicine Catalogue columns & backfills
         conn.execute(text("ALTER TABLE medicines ADD COLUMN IF NOT EXISTS strength VARCHAR;"))

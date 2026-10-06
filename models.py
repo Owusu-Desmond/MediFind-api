@@ -80,6 +80,8 @@ class Pharmacy(Base):
     lng = Column(Float, nullable=True)
     verified = Column(Boolean, default=False)
     certificate_url = Column(String, nullable=True)
+    image_url = Column(String, nullable=True) # Storefront / Pharmacy photo
+    logo_url = Column(String, nullable=True) # Logo / Avatar
 
     # Paystack & Payout details
     paystack_subaccount_code = Column(String, nullable=True) # e.g. "ACCT_xxxx"

@@ -62,6 +62,8 @@ class PharmacyBase(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
+    image_url: Optional[str] = None
+    logo_url: Optional[str] = None
     # Payout details
     payment_account_type: Optional[str] = None # "bank" or "mobile_money"
     bank_name: Optional[str] = None
@@ -88,6 +90,8 @@ class PharmacyUpdate(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     certificate_url: Optional[str] = None
+    image_url: Optional[str] = None
+    logo_url: Optional[str] = None
     status: Optional[str] = None
     payment_account_type: Optional[str] = None
     bank_name: Optional[str] = None
