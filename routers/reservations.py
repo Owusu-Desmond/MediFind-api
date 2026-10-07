@@ -9,6 +9,7 @@ import models
 import schemas
 import deps
 import paystack_service
+from notification_service import NotificationService
 
 router = APIRouter(
     prefix="/api/reservations",
@@ -38,8 +39,20 @@ def check_and_expire_reservations(db: Session):
 
     for res in expired_res:
         res.status = models.ReservationStatus.Expired
-        # If inventory was previously deducted on approval, restore it
-        # (Inventory is deducted on Approval or Paid)
+        pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+        ref = res.reservation_code or res.ref_number or f"#{res.id}"
+        NotificationService.send(
+            db=db,
+            recipient_type=models.RecipientType.PATIENT,
+            recipient_user_id=res.patient_id,
+            notification_type=models.NotificationType.RESERVATION_EXPIRED.value,
+            title="Reservation Expired ⏰",
+            message=f"Your unpaid reservation ({ref}) at {pharmacy_name} has expired.",
+            reference_type="reservation",
+            reference_id=str(res.id),
+            action_url=f"/reservations/{res.id}",
+            priority=models.NotificationPriority.NORMAL
+        )
     if expired_res:
         db.commit()
 
@@ -139,6 +152,54 @@ def create_reservation(
     
     db.commit()
     db.refresh(new_res)
+
+    # Build medicine names summary for pharmacy notification
+    item_names = []
+    for item_data in items_to_create:
+        med = db.query(models.Medicine).filter(models.Medicine.id == item_data["medicine_id"]).first()
+        if med:
+            item_names.append(f"{med.name} (x{item_data['quantity']})")
+    item_summary = ", ".join(item_names) if item_names else "medicines"
+
+    # 1. Notify patient
+    NotificationService.notify_patient_reservation_submitted(db, new_res, pharmacy.name)
+
+    # 2. Notify pharmacy
+    NotificationService.notify_pharmacy_new_reservation(db, new_res, current_user.name, item_summary)
+
+    # 3. If Cash, notify pharmacy specifically about cash payment to collect
+    if payment_method == models.PaymentMethod.CASH:
+        ref_code = new_res.reservation_code or new_res.ref_number or f"#{new_res.id}"
+        NotificationService.send(
+            db=db,
+            recipient_type=models.RecipientType.PHARMACY,
+            recipient_pharmacy_id=new_res.pharmacy_id,
+            notification_type=models.NotificationType.CASH_RESERVATION.value,
+            title="Cash Reservation Placed 💰",
+            message=f"New cash reservation from {current_user.name} ({ref_code}). Payment due upon pickup/delivery.",
+            reference_type="reservation",
+            reference_id=str(new_res.id),
+            action_url=f"/reservations?id={new_res.id}",
+            priority=models.NotificationPriority.NORMAL
+        )
+
+    # 4. If Delivery requested, notify pharmacy
+    if new_res.fulfillment_method == "Delivery":
+        ref_code = new_res.reservation_code or new_res.ref_number or f"#{new_res.id}"
+        NotificationService.send(
+            db=db,
+            recipient_type=models.RecipientType.PHARMACY,
+            recipient_pharmacy_id=new_res.pharmacy_id,
+            notification_type=models.NotificationType.NEW_DELIVERY_REQUEST.value,
+            title="New Delivery Request 🚚",
+            message=f"Order ({ref_code}) requested delivery to {new_res.fulfillment_address or 'patient address'}.",
+            reference_type="reservation",
+            reference_id=str(new_res.id),
+            action_url=f"/reservations?id={new_res.id}",
+            priority=models.NotificationPriority.NORMAL
+        )
+
+    db.commit()
     return new_res
 
 @router.get("/", response_model=List[schemas.ReservationResponse])
@@ -276,6 +337,15 @@ def mark_cash_paid(
                 inv.status = "Out of Stock"
             elif inv.stock_quantity <= 20:
                 inv.status = "Low Stock"
+            
+            if inv.stock_quantity <= 5:
+                med_name = item.medicine.name if item.medicine else "Medicine"
+                NotificationService.notify_pharmacy_low_stock(db, res.pharmacy_id, med_name, inv.stock_quantity)
+
+    # 6. Notifications
+    pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+    NotificationService.notify_patient_reservation_status(db, res, pharmacy_name, models.ReservationStatus.Collected.value)
+    NotificationService.notify_pharmacy_payment_received(db, res, res.total_price, method="CASH")
 
     db.commit()
     db.refresh(res)
@@ -351,10 +421,24 @@ def update_status(
                     inv.status = "Out of Stock"
                 elif inv.stock_quantity <= 20:
                     inv.status = "Low Stock"
+                
+                if inv.stock_quantity <= 5:
+                    med_name = item.medicine.name if item.medicine else "Medicine"
+                    NotificationService.notify_pharmacy_low_stock(db, res.pharmacy_id, med_name, inv.stock_quantity)
 
     res.status = new_status
     if reason:
         res.rejection_reason = reason
+
+    pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+    new_status_str = new_status.value if hasattr(new_status, "value") else str(new_status)
+
+    if new_status == models.ReservationStatus.Cancelled and current_user.role == models.UserRole.Patient:
+        NotificationService.notify_pharmacy_patient_cancelled(db, res, current_user.name)
+        NotificationService.notify_patient_reservation_status(db, res, pharmacy_name, new_status_str, reason)
+    else:
+        NotificationService.notify_patient_reservation_status(db, res, pharmacy_name, new_status_str, reason)
+
     db.commit()
     db.refresh(res)
     return res
@@ -376,6 +460,11 @@ def cancel_reservation(
     res.status = models.ReservationStatus.Cancelled
     if reason:
         res.rejection_reason = reason
+
+    pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+    NotificationService.notify_pharmacy_patient_cancelled(db, res, current_user.name)
+    NotificationService.notify_patient_reservation_status(db, res, pharmacy_name, models.ReservationStatus.Cancelled.value, reason)
+
     db.commit()
     db.refresh(res)
     return res

@@ -447,3 +447,47 @@ class StaffResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class NotificationBase(BaseModel):
+    recipient_type: str
+    notification_type: str
+    title: str
+    message: str
+    priority: Optional[str] = "NORMAL"
+    reference_type: Optional[str] = None
+    reference_id: Optional[str] = None
+    action_url: Optional[str] = None
+
+class NotificationCreate(NotificationBase):
+    recipient_user_id: Optional[int] = None
+    recipient_pharmacy_id: Optional[int] = None
+
+class NotificationResponse(NotificationBase):
+    id: int
+    recipient_user_id: Optional[int] = None
+    recipient_pharmacy_id: Optional[int] = None
+    is_read: bool
+    read_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class NotificationListResponse(BaseModel):
+    total: int
+    unread_count: int
+    items: List[NotificationResponse]
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+class MarkReadResponse(BaseModel):
+    success: bool
+    message: str
+    marked_count: int
+
+class ClearNotificationsResponse(BaseModel):
+    success: bool
+    message: str
+    cleared_count: int
+
+

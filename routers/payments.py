@@ -8,6 +8,7 @@ import models
 import schemas
 import deps
 import paystack_service
+from notification_service import NotificationService
 
 router = APIRouter(
     prefix="/api/payments",
@@ -218,6 +219,15 @@ async def verify_payment(
                 elif inv.stock_quantity <= 20:
                     inv.status = "Low Stock"
 
+                if inv.stock_quantity <= 5:
+                    med_name = item.medicine.name if item.medicine else "Medicine"
+                    NotificationService.notify_pharmacy_low_stock(db, res.pharmacy_id, med_name, inv.stock_quantity)
+
+        # Dispatch notifications
+        pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+        NotificationService.notify_patient_payment_result(db, res, pharmacy_name, success=True)
+        NotificationService.notify_pharmacy_payment_received(db, res, tx.amount, method="PAYSTACK")
+
         db.commit()
         db.refresh(tx)
         db.refresh(res)
@@ -237,11 +247,18 @@ async def verify_payment(
     else:
         tx.payment_status = models.PaymentStatus.FAILED
         tx.paystack_status = verification.get("transaction_status", "failed")
+        
+        # Dispatch failure notifications
+        pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+        err_msg = verification.get("message", "Payment verification failed or transaction not completed")
+        NotificationService.notify_patient_payment_result(db, res, pharmacy_name, success=False, reason=err_msg)
+        NotificationService.notify_admin_payment_failure(db, reference, err_msg)
+
         db.commit()
 
         return schemas.PaymentVerifyResponse(
             status="Failed",
-            message=verification.get("message", "Payment verification failed or transaction not completed"),
+            message=err_msg,
             reservation_id=res.id,
             reservation_status=res.status.value if hasattr(res.status, "value") else str(res.status),
             payment_status=models.PaymentStatus.FAILED.value,
@@ -318,7 +335,19 @@ async def paystack_webhook(
                         elif inv.stock_quantity <= 20:
                             inv.status = "Low Stock"
 
+                        if inv.stock_quantity <= 5:
+                            med_name = item.medicine.name if item.medicine else "Medicine"
+                            NotificationService.notify_pharmacy_low_stock(db, res.pharmacy_id, med_name, inv.stock_quantity)
+
+                # Notifications
+                pharmacy_name = res.pharmacy.name if res.pharmacy else "Pharmacy"
+                NotificationService.notify_patient_payment_result(db, res, pharmacy_name, success=True)
+                NotificationService.notify_pharmacy_payment_received(db, res, tx.amount, method="PAYSTACK")
+
             db.commit()
+    elif event_type in ("charge.failed", "transfer.failed"):
+        NotificationService.notify_admin_payment_failure(db, reference, f"Webhook received {event_type}")
+        db.commit()
 
     return {"status": "ok"}
 

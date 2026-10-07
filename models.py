@@ -43,6 +43,52 @@ class PaymentStatus(str, enum.Enum):
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
 
+class RecipientType(str, enum.Enum):
+    PATIENT = "PATIENT"
+    PHARMACY = "PHARMACY"
+    ADMIN = "ADMIN"
+
+class NotificationPriority(str, enum.Enum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+    URGENT = "URGENT"
+
+class NotificationType(str, enum.Enum):
+    # Patient events
+    RESERVATION_CREATED = "RESERVATION_CREATED"
+    RESERVATION_APPROVED = "RESERVATION_APPROVED"
+    RESERVATION_REJECTED = "RESERVATION_REJECTED"
+    RESERVATION_CANCELLED = "RESERVATION_CANCELLED"
+    MEDICINE_READY_PICKUP = "MEDICINE_READY_PICKUP"
+    DELIVERY_STATUS_CHANGED = "DELIVERY_STATUS_CHANGED"
+    RESERVATION_EXPIRING = "RESERVATION_EXPIRING"
+    RESERVATION_EXPIRED = "RESERVATION_EXPIRED"
+    PAYMENT_SUCCESS = "PAYMENT_SUCCESS"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+    
+    # Pharmacy events
+    NEW_RESERVATION = "NEW_RESERVATION"
+    PATIENT_CANCELLED = "PATIENT_CANCELLED"
+    PAYMENT_RECEIVED = "PAYMENT_RECEIVED"
+    CASH_RESERVATION = "CASH_RESERVATION"
+    NEW_DELIVERY_REQUEST = "NEW_DELIVERY_REQUEST"
+    PHARMACY_APPROVED = "PHARMACY_APPROVED"
+    PHARMACY_REJECTED = "PHARMACY_REJECTED"
+    PHARMACY_STATUS_CHANGE = "PHARMACY_STATUS_CHANGE"
+    LOW_STOCK_ALERT = "LOW_STOCK_ALERT"
+    STOCK_UPDATE_REQUIRED = "STOCK_UPDATE_REQUIRED"
+    
+    # Admin events
+    ADMIN_NEW_PHARMACY = "ADMIN_NEW_PHARMACY"
+    ADMIN_CERTIFICATE_SUBMITTED = "ADMIN_CERTIFICATE_SUBMITTED"
+    ADMIN_VERIFICATION_ISSUE = "ADMIN_VERIFICATION_ISSUE"
+    ADMIN_PAYMENT_FAILURE = "ADMIN_PAYMENT_FAILURE"
+    REPORT_SUBMITTED = "REPORT_SUBMITTED"
+    SUSPICIOUS_ACTIVITY = "SUSPICIOUS_ACTIVITY"
+    SYSTEM_ALERT = "SYSTEM_ALERT"
+    SECURITY_ALERT = "SECURITY_ALERT"
+
 class User(Base):
     __tablename__ = "users"
 
@@ -265,4 +311,29 @@ class PaymentTransaction(Base):
 
 # Keep legacy Payment alias for backwards compatibility
 Payment = PaymentTransaction
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_type = Column(Enum(RecipientType, native_enum=False), nullable=False, index=True)
+    recipient_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    recipient_pharmacy_id = Column(Integer, ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    notification_type = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    priority = Column(Enum(NotificationPriority, native_enum=False), default=NotificationPriority.NORMAL, nullable=False)
+
+    reference_type = Column(String, nullable=True) # e.g. "reservation", "pharmacy", "payment", "medicine"
+    reference_id = Column(String, nullable=True) # e.g. "123"
+    action_url = Column(String, nullable=True) # e.g. "/reservations/123"
+
+    is_read = Column(Boolean, default=False, nullable=False, index=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    user = relationship("User", foreign_keys=[recipient_user_id])
+    pharmacy = relationship("Pharmacy", foreign_keys=[recipient_pharmacy_id])
+
 

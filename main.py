@@ -4,7 +4,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routers import auth, users, pharmacies, medicines, reservations, payments
+from routers import auth, users, pharmacies, medicines, reservations, payments, notifications
 
 from sqlalchemy import text
 
@@ -166,6 +166,7 @@ app.include_router(pharmacies.router)
 app.include_router(medicines.router)
 app.include_router(reservations.router)
 app.include_router(payments.router)
+app.include_router(notifications.router)
 
 @app.get("/")
 def read_root():

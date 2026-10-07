@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
 import models, schemas, deps, auth, storage, paystack_service
 from utils import calculate_pharmacy_open_status, send_approval_email, generate_secure_password
+from notification_service import NotificationService
 
 router = APIRouter(
     prefix="/api/pharmacies",
@@ -166,6 +167,13 @@ def create_pharmacy(pharmacy: schemas.PharmacyCreate, db: Session = Depends(deps
     db.add(new_pharmacy)
     db.commit()
     db.refresh(new_pharmacy)
+
+    # 1. Notify admin of new pharmacy registration
+    NotificationService.notify_admin_new_pharmacy(db, new_pharmacy)
+    if new_pharmacy.certificate_url:
+        NotificationService.notify_admin_certificate_submitted(db, new_pharmacy)
+
+    db.commit()
     return enrich_pharmacy_response(new_pharmacy)
 
 @router.get("/", response_model=List[schemas.PharmacyResponse])
@@ -240,6 +248,9 @@ def update_pharmacy_status(pharmacy_id: int, status: str, db: Session = Depends(
             login_url="http://localhost:3001/"
         )
 
+    # Trigger pharmacy portal notification
+    NotificationService.notify_pharmacy_verification_update(db, pharmacy, pharmacy.status)
+
     db.commit()
     db.refresh(pharmacy)
     return enrich_pharmacy_response(pharmacy)
@@ -255,6 +266,9 @@ def update_pharmacy(
     if not pharmacy:
         raise HTTPException(status_code=404, detail="Pharmacy not found")
 
+    old_cert = pharmacy.certificate_url
+    old_status = pharmacy.status
+
     update_dict = pharmacy_data.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
         if key == "status" and value:
@@ -264,6 +278,14 @@ def update_pharmacy(
                 raise HTTPException(status_code=400, detail=f"Invalid status '{value}'")
         else:
             setattr(pharmacy, key, value)
+
+    # Check for certificate upload update
+    if pharmacy.certificate_url and pharmacy.certificate_url != old_cert:
+        NotificationService.notify_admin_certificate_submitted(db, pharmacy)
+
+    # Check for status changes
+    if pharmacy.status != old_status:
+        NotificationService.notify_pharmacy_verification_update(db, pharmacy, pharmacy.status)
 
     db.commit()
     db.refresh(pharmacy)
