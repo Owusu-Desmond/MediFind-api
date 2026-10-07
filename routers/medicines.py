@@ -91,8 +91,26 @@ def resolve_canonical_medicines(
         if med.id not in ranked_matches or ranked_matches[med.id][2] < score:
             ranked_matches[med.id] = (med, match_type, score)
 
-    # Fetch all matching category/status candidates in a single optimized DB roundtrip
-    candidates = base_query.all()
+    # 1. Fast SQL Filter: narrow down candidates at the database level in milliseconds
+    search_sql_filter = or_(
+        models.Medicine.name.ilike(f"%{q_clean}%"),
+        models.Medicine.generic_name.ilike(f"%{q_clean}%"),
+        models.Medicine.manufacturer.ilike(f"%{q_clean}%"),
+        models.Medicine.tags.ilike(f"%{q_clean}%"),
+        models.Medicine.description.ilike(f"%{q_clean}%"),
+        models.Medicine.aliases.any(models.MedicineAlias.alias.ilike(f"%{q_clean}%"))
+    )
+    candidates = base_query.filter(search_sql_filter).limit(150).all()
+
+    # If no direct SQL substring match found and query has at least 2 chars, fetch prefix candidates for typo tolerance
+    if not candidates and len(q_clean) >= 2:
+        prefix = q_clean[:2]
+        prefix_filter = or_(
+            models.Medicine.name.ilike(f"{prefix}%"),
+            models.Medicine.generic_name.ilike(f"{prefix}%"),
+            models.Medicine.aliases.any(models.MedicineAlias.alias.ilike(f"{prefix}%"))
+        )
+        candidates = base_query.filter(prefix_filter).limit(100).all()
 
     for m in candidates:
         name_lower = (m.name or "").strip().lower()
