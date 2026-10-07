@@ -66,7 +66,12 @@ def resolve_canonical_medicines(
     if is_active is not None:
         base_query = base_query.filter(models.Medicine.is_active == is_active)
     if category and category != "All":
-        base_query = base_query.filter(models.Medicine.category == category)
+        base_query = base_query.filter(
+            or_(
+                models.Medicine.category == category,
+                models.Medicine.therapeutic_category == category
+            )
+        )
     if dosage_form and dosage_form != "All":
         base_query = base_query.filter(models.Medicine.dosage_form == dosage_form)
     if requires_prescription is not None:
@@ -240,44 +245,81 @@ def get_medicines(
 
 @router.get("/search")
 def search_medicines(
+    response: Response,
     q: Optional[str] = "",
     category: Optional[str] = None,
     dosage_form: Optional[str] = None,
     lat: Optional[float] = None,
     lng: Optional[float] = None,
+    skip: int = 0,
+    limit: int = 20,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     db: Session = Depends(deps.get_db)
 ):
     """
     Patient Medicine Search: Resolves canonical medicine identity across exact names,
     aliases (e.g. Panadol -> Paracetamol), generic INN, abbreviations, and typos.
     Returns approved pharmacies stocking the medicine with prices, availability, and distances.
+    Supports pagination (default 20 items per page, with subsequent pages e.g. 10 items).
     """
-    # 1. Resolve canonical medicine matches
-    resolved_meds, _ = resolve_canonical_medicines(
-        db=db,
-        query_str=q,
-        category=category,
-        dosage_form=dosage_form,
-        is_active=True,
-        skip=0,
-        limit=50
-    )
+    actual_skip = (page - 1) * page_size if (page is not None and page_size is not None) else max(0, skip)
+    actual_limit = page_size if (page is not None and page_size is not None) else max(1, limit)
 
-    if not resolved_meds:
-        return []
+    q_str = (q or "").strip()
 
-    med_lookup = {med.id: (med, matched_by) for med, matched_by, score in resolved_meds}
-    med_ids = list(med_lookup.keys())
+    if not q_str:
+        # Exploration Mode: Retrieve active inventory from all approved pharmacies directly
+        inv_query = db.query(models.Inventory).options(
+            joinedload(models.Inventory.medicine).joinedload(models.Medicine.aliases),
+            joinedload(models.Inventory.pharmacy)
+        ).join(models.Pharmacy).join(models.Medicine).filter(
+            models.Pharmacy.status == models.PharmacyStatus.Approved,
+            models.Medicine.is_active == True,
+            models.Inventory.is_available == True
+        )
+        if category and category != "All":
+            inv_query = inv_query.filter(
+                or_(
+                    models.Medicine.category == category,
+                    models.Medicine.therapeutic_category == category
+                )
+            )
+        if dosage_form and dosage_form != "All":
+            inv_query = inv_query.filter(models.Medicine.dosage_form == dosage_form)
 
-    # 2. Query active pharmacy inventories for these canonical medicines
-    inventories = db.query(models.Inventory).options(
-        joinedload(models.Inventory.medicine).joinedload(models.Medicine.aliases),
-        joinedload(models.Inventory.pharmacy)
-    ).join(models.Pharmacy).filter(
-        models.Inventory.medicine_id.in_(med_ids),
-        models.Pharmacy.status == models.PharmacyStatus.Approved,
-        models.Inventory.is_available == True
-    ).all()
+        inventories = inv_query.order_by(models.Inventory.id.desc()).all()
+        med_lookup = {inv.medicine_id: (inv.medicine, "catalogue") for inv in inventories if inv.medicine}
+    else:
+        # Search Mode: Resolve canonical medicine matches
+        resolved_meds, _ = resolve_canonical_medicines(
+            db=db,
+            query_str=q_str,
+            category=category,
+            dosage_form=dosage_form,
+            is_active=True,
+            skip=0,
+            limit=100
+        )
+
+        if not resolved_meds:
+            response.headers["X-Total-Count"] = "0"
+            response.headers["X-Has-More"] = "false"
+            response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Has-More, X-Skip, X-Limit"
+            return []
+
+        med_lookup = {med.id: (med, matched_by) for med, matched_by, score in resolved_meds}
+        med_ids = list(med_lookup.keys())
+
+        # Query active pharmacy inventories for these canonical medicines
+        inventories = db.query(models.Inventory).options(
+            joinedload(models.Inventory.medicine).joinedload(models.Medicine.aliases),
+            joinedload(models.Inventory.pharmacy)
+        ).join(models.Pharmacy).filter(
+            models.Inventory.medicine_id.in_(med_ids),
+            models.Pharmacy.status == models.PharmacyStatus.Approved,
+            models.Inventory.is_available == True
+        ).all()
 
     results = []
     for inv in inventories:
@@ -358,7 +400,17 @@ def search_medicines(
     if lat is not None and lng is not None:
         results.sort(key=lambda x: x["distance_km"] if x["distance_km"] is not None else float('inf'))
 
-    return results
+    total_count = len(results)
+    paged_results = results[actual_skip : actual_skip + actual_limit]
+    has_more = (actual_skip + actual_limit) < total_count
+
+    response.headers["X-Total-Count"] = str(total_count)
+    response.headers["X-Has-More"] = "true" if has_more else "false"
+    response.headers["X-Skip"] = str(actual_skip)
+    response.headers["X-Limit"] = str(actual_limit)
+    response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Has-More, X-Skip, X-Limit"
+
+    return paged_results
 
 @router.get("/admin/duplicates")
 def get_duplicate_candidates(
