@@ -104,7 +104,7 @@ class User(Base):
     date_created = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    reservations = relationship("Reservation", back_populates="patient", foreign_keys="Reservation.patient_id")
+    reservations = relationship("Reservation", back_populates="patient", foreign_keys="Reservation.patient_id", cascade="all, delete-orphan")
 
 class Pharmacy(Base):
     __tablename__ = "pharmacies"
@@ -153,8 +153,8 @@ class PharmacyStaff(Base):
     __tablename__ = "pharmacy_staff"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False)
 
     user = relationship("User")
     pharmacy = relationship("Pharmacy", back_populates="staff")
@@ -237,8 +237,8 @@ class Reservation(Base):
     __tablename__ = "reservations"
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False)
     date = Column(DateTime(timezone=True), server_default=func.now())
     fulfillment_method = Column(String, nullable=True) # "Pickup" or "Delivery"
     fulfillment_address = Column(String, nullable=True)
@@ -259,7 +259,7 @@ class Reservation(Base):
     paid_at = Column(DateTime(timezone=True), nullable=True)
     payment_verified_at = Column(DateTime(timezone=True), nullable=True)
     
-    cash_payment_confirmed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cash_payment_confirmed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     cash_payment_confirmed_at = Column(DateTime(timezone=True), nullable=True)
     is_hidden_by_patient = Column(Boolean, default=False, nullable=False)
 
@@ -273,8 +273,8 @@ class ReservationItem(Base):
     __tablename__ = "reservation_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    reservation_id = Column(Integer, ForeignKey("reservations.id"), nullable=False)
-    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
+    reservation_id = Column(Integer, ForeignKey("reservations.id", ondelete="CASCADE"), nullable=False)
+    medicine_id = Column(Integer, ForeignKey("medicines.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
 
@@ -285,9 +285,9 @@ class PaymentTransaction(Base):
     __tablename__ = "payment_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
-    reservation_id = Column(Integer, ForeignKey("reservations.id"), nullable=False)
-    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
-    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    reservation_id = Column(Integer, ForeignKey("reservations.id", ondelete="CASCADE"), nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
     payment_method = Column(Enum(PaymentMethod, native_enum=False), default=PaymentMethod.PAYSTACK, nullable=False)
     payment_status = Column(Enum(PaymentStatus, native_enum=False), default=PaymentStatus.PENDING, nullable=False)
