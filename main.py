@@ -155,9 +155,13 @@ app.add_middleware(
 import os
 from fastapi.staticfiles import StaticFiles
 
-# Create upload directory and mount static files
-os.makedirs("uploads/certificates", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Create upload directory and mount static files (safely handled for serverless environments)
+try:
+    os.makedirs("uploads/certificates", exist_ok=True)
+    if os.path.exists("uploads"):
+        app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+except Exception as static_err:
+    print(f"[startup] Notice: Static uploads mount skipped ({static_err})")
 
 # Include routers
 app.include_router(auth.router)
